@@ -112,11 +112,21 @@ B. 上海
 
   <section>
     <h2>快捷键</h2>
+    <div class="shortcut-setting">
+      <div class="shortcut-setting-label">气泡显示/隐藏快捷键</div>
+      <div class="shortcut-setting-value" id="bubbleShortcutValue">正在读取…</div>
+      <div class="row">
+        <button id="setBubbleShortcut" type="button" class="primary">设置快捷键</button>
+        <button id="refreshBubbleShortcut" type="button">刷新当前快捷键</button>
+      </div>
+      <p class="muted">在打开的页面中找到 QuizKing 的“显示或隐藏气泡”条目，点击编辑并输入按键。返回此页面后自动刷新；快捷键由 Chrome 即时保存，无需点击底部“保存”。</p>
+      <div id="bubbleShortcutStatus" class="muted" role="status" aria-live="polite"></div>
+    </div>
     <p class="muted">在 <code>chrome://extensions/shortcuts</code> 中可重新绑定这 4 个命令。Windows / Linux 用 <kbd>Ctrl</kbd>，macOS 用 <kbd>⌘ Command</kbd>。</p>
     <table class="kbd-table">
       <thead>
         <tr>
-          <th>快捷键</th>
+          <th>快捷键（前三项为默认）</th>
           <th>作用</th>
           <th>何时用</th>
         </tr>
@@ -138,7 +148,7 @@ B. 上海
           <td>无选区时把整页 <code>innerText</code> 前 6000 字符发给 LLM。推荐：长文章 / 整段题文 / 多选合集。</td>
         </tr>
         <tr>
-          <td><kbd>Ctrl+Shift+H</kbd></td>
+          <td><kbd id="bubbleShortcutTableValue">正在读取…</kbd></td>
           <td><b>显示 / 隐藏气泡</b></td>
           <td>答题完成后想收起气泡（不删除内容），再按一次又出现。气泡拖到屏幕任何位置可记忆。</td>
         </tr>

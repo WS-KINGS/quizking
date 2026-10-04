@@ -92,6 +92,13 @@ button.primary:hover { background: #2a4edb; color: #fff; }
 .provider .p-status.ok { color: #1a7f42; }
 footer #saveRes.aqh-dirty { color: #b3261e; font-weight: 500; }
 .kbd { padding-left: 18px; }
+.shortcut-setting { padding: 12px 14px; margin-bottom: 12px; background: #fafbff; border: 1px solid #eaeaf2; border-radius: 8px; }
+.shortcut-setting-label { font-size: 13px; color: #3b3f51; }
+.shortcut-setting-value { margin-top: 6px; font-size: 16px; font-weight: 600; }
+.shortcut-setting p { line-height: 1.6; }
+.shortcut-setting .row { flex-wrap: wrap; }
+.shortcut-setting button:disabled { opacity: .55; cursor: wait; }
+#bubbleShortcutStatus.shortcut-error { color: #b3261e; }
 kbd { background: #eef0f6; padding: 2px 6px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 12px; }
 .kbd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .kbd-table th, .kbd-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eaeaf2; vertical-align: top; }

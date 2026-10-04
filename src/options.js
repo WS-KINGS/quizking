@@ -280,8 +280,58 @@ function escapeHtml(s) {
   ));
 }
 
+// --- Browser-assigned shortcuts ------------------------------------------
+
+let readingBubbleShortcut = false;
+
+function shortcutStatus(message, error = false) {
+  $("bubbleShortcutStatus").textContent = message;
+  $("bubbleShortcutStatus").classList.toggle("shortcut-error", error);
+}
+
+function refreshBubbleShortcut() {
+  if (readingBubbleShortcut) return;
+  readingBubbleShortcut = true;
+  $("refreshBubbleShortcut").disabled = true;
+  const finish = (shortcut, error) => {
+    readingBubbleShortcut = false;
+    $("refreshBubbleShortcut").disabled = false;
+    const value = error ? "读取失败" : shortcut || "未分配快捷键";
+    $("bubbleShortcutValue").textContent = value;
+    $("bubbleShortcutTableValue").textContent = value;
+    shortcutStatus(error ? "无法读取当前快捷键：" + error + "。可点击“设置快捷键”在 Chrome 中查看。" : shortcut ? "当前已分配，可在网页中按此快捷键隐藏或恢复答案气泡。" : "尚未分配或存在按键冲突，请点击“设置快捷键”分配可用按键。", Boolean(error));
+  };
+  try {
+    chrome.commands.getAll((commands) => {
+      const error = chrome.runtime.lastError;
+      if (error) { finish("", error.message || "Chrome 返回错误"); return; }
+      const command = commands?.find((item) => item.name === "toggle-bubble");
+      if (!command) { finish("", "未找到气泡显示/隐藏命令，请重新加载扩展"); return; }
+      finish(String(command.shortcut || "").trim());
+    });
+  } catch (error) { finish("", error.message || "快捷键接口不可用"); }
+}
+
+function openShortcutSettings() {
+  $("setBubbleShortcut").disabled = true;
+  const finish = (error) => {
+    $("setBubbleShortcut").disabled = false;
+    shortcutStatus(error ? "无法打开快捷键设置：" + error + "。请在地址栏打开 chrome://extensions/shortcuts。" : "已打开 Chrome 快捷键设置；修改后返回此页面即可查看新按键。", Boolean(error));
+  };
+  try {
+    chrome.tabs.create({ url: "chrome://extensions/shortcuts" }, () => {
+      const error = chrome.runtime.lastError;
+      finish(error?.message || "");
+    });
+  } catch (error) { finish(error.message || "打开失败"); }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   load();
+  refreshBubbleShortcut();
+  $("setBubbleShortcut").addEventListener("click", openShortcutSettings);
+  $("refreshBubbleShortcut").addEventListener("click", refreshBubbleShortcut);
+  window.addEventListener("focus", refreshBubbleShortcut);
   $("saveBtn").addEventListener("click", save);
   $("addProvider").addEventListener("click", addProvider);
   $("testBtn").addEventListener("click", testAll);

@@ -4,7 +4,7 @@
 
 > 把网页上看到的题目（截图 / 划词 / DOM）丢给 OpenAI 兼容 LLM，把答案 / 解析吐回悬浮气泡。
 
-[![Release](https://img.shields.io/badge/release-v0.4.0-3563ff)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.1-3563ff)](../../releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/manifest-V3-3563ff)](#技术栈)
 [![Chrome 114+](https://img.shields.io/badge/chrome-114%2B-4285f4)](#安装)
@@ -174,6 +174,10 @@ D. 金星
 | `Ctrl+Shift+H` | **显示 / 隐藏气泡** | 答题完成后想收起气泡（不丢内容），再按一次又出现。 |
 
 > 在 `chrome://extensions/shortcuts` 可重新绑定这 4 个命令。
+
+**气泡隐藏/显示**：默认 `Ctrl+Shift+H`（macOS 为 `Command+Shift+H`），控制显示答案的悬浮窗口。隐藏后保留答案与解析；再次按键恢复。正在等待模型时也可以隐藏，结果返回不会强制弹出。没有气泡时按键会显示操作提示。工具栏中的「显示/隐藏 王字按钮」单独控制触发菜单。
+
+需要换键时，打开插件设置页，在「快捷键」查看当前实际分配的按键并点击「设置快捷键」，在 Chrome 的 QuizKing「显示或隐藏气泡」条目中录入组合键。若显示“未设置”，说明当前浏览器没有分配此快捷键，需在该页手动设置。
 
 ![快捷键说明](assets/screenshots/shortcuts.png)
 

@@ -62,11 +62,12 @@
   function renderBubble(html, opts) {
     opts = opts || {};
     const root = ensureRoot();
+    const wasHidden = !!document.getElementById("aqh-bubble")?.classList.contains("aqh-hide");
     root.innerHTML = "";
     const wrap = document.createElement("div");
     wrap.id = "aqh-bubble";
     wrap.style.setProperty("--aqh-o", String(getCssOpacity()));
-    if (opts.hidden) wrap.classList.add("aqh-hide");
+    if (opts.hidden ?? wasHidden) wrap.classList.add("aqh-hide");
     wrap.innerHTML =
       '<div id="aqh-header">' +
         '<div id="aqh-title"><span id="aqh-title-glyph">王</span><span id="aqh-title-text">QuizKing · 答题王</span></div>' +
@@ -605,6 +606,17 @@
     return true;
   }
 
+  function toggleBubble() {
+    const bubble = document.getElementById("aqh-bubble");
+    if (!bubble) {
+      renderBubble('<div class="aqh-reasoning-block">暂无答题结果。请先选中文字或截取题目，获得答案后可用此快捷键随时隐藏、显示。</div>',
+        { status: "气泡已显示；隐藏不会删除已有答案。" });
+      return true;
+    }
+    bubble.classList.toggle("aqh-hide");
+    return !bubble.classList.contains("aqh-hide");
+  }
+
   function ensureFab() {
     let fab = document.getElementById("aqh-fab");
     if (fab) return fab;
@@ -657,8 +669,8 @@
 
   async function handleTrigger(kind) {
     if (kind === "toggle") {
-      // Toggle the 王字 FAB (default hidden, click to summon).
-      toggleFab();
+      // The shortcut controls the answer bubble; the toolbar's FAB action is separate.
+      toggleBubble();
       return;
     }
     try {
