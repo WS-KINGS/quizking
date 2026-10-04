@@ -19,13 +19,17 @@
   let promptMode = "answer";
   // In-flight multi-provider request: { reqId, roster, items, promptMode, label }.
   let activeReq = null;
+  let requestSerial = 0;
 
   function getRuntime() { return chrome.runtime; }
 
   function callBg(type, payload) {
     return new Promise((resolve) => {
       try {
-        getRuntime().sendMessage({ type, payload }, (res) => resolve(res));
+        getRuntime().sendMessage({ type, payload }, (res) => {
+          const err = getRuntime().lastError;
+          resolve(err ? { ok: false, error: err.message } : res);
+        });
       } catch (e) {
         resolve({ ok: false, error: e?.message || String(e) });
       }
@@ -94,6 +98,8 @@
   }
 
   function closeBubble() {
+    requestSerial++;
+    activeReq = null;
     const root = document.getElementById(ROOT_ID);
     if (root) root.innerHTML = "";
   }
@@ -128,7 +134,12 @@
   function getPageText(limit) {
     limit = limit || 6000;
     const root = document.body || document.documentElement;
-    const text = (root.innerText || "").trim();
+    const ownUi = [document.getElementById(ROOT_ID), document.getElementById("aqh-fab")].filter(Boolean);
+    const previous = ownUi.map((el) => el.style.display);
+    ownUi.forEach((el) => { el.style.display = "none"; });
+    let text;
+    try { text = (root.innerText || "").trim(); }
+    finally { ownUi.forEach((el, i) => { el.style.display = previous[i]; }); }
     return text.length > limit ? text.slice(0, limit) : text;
   }
 
@@ -280,33 +291,25 @@
   }
 
   async function askAndShow(payload, label) {
-    if (!cfg || !cfg.hasKey) {
-      renderBubble(
-        '<div class="aqh-err">未配置 API Key。</div>' +
-        '<div style="margin-top:8px">' +
-          '<button id="aqh-openopts" class="aqh-btn-primary">打开设置</button>' +
-        '</div>',
-        { status: "需要先在选项页填写 API Key" }
-      );
-      const b = document.getElementById("aqh-openopts");
-      if (b) b.addEventListener("click", () => {
-        try { chrome.runtime.openOptionsPage(); } catch (e) { void e; }
-      });
-      return;
-    }
-    const n = ((cfg && cfg.providers) || []).filter((p) => p.enabled && p.hasKey).length;
+    const serial = ++requestSerial;
+    const reqId = "r" + Date.now().toString(36) + "_" + serial;
+    activeReq = { reqId, awaitingAck: true, queued: [], roster: [], items: {}, label };
     renderBubble(
       '<div class="aqh-reasoning-block"><div class="aqh-reasoning-label">已捕获</div>' +
       escapeHtml(label || "(image)") + '</div>',
-      { status: n > 1 ? ("正在向 " + n + " 个模型并行发送请求…") : "正在向 LLM 发送请求…", loading: true }
+      { status: "正在准备检索题库…", loading: true }
     );
-    const res = await callBg("aqh/ask", payload);
+    const res = await callBg("aqh/ask", { ...payload, reqId });
+    if (serial !== requestSerial) return;
     if (!res || !res.ok) {
+      activeReq = null;
       setStatus("失败：" + ((res && res.error) || "未知错误"));
       appendError((res && res.error) || "未知错误");
       return;
     }
+    const queued = activeReq?.queued || [];
     beginIncremental(res.result, label);
+    queued.forEach(handleAnswerEvent);
   }
 
   /**
@@ -403,6 +406,8 @@
         }
         // Single provider: keep the original plain layout.
         renderSingle(body, only.answer, only.reasoning, only.raw, r.promptMode);
+        appendBankNote(body, only);
+        if (r.bankNotice) setStatus(r.bankNotice);
         return;
       }
       renderMulti(body, items, r.promptMode, r.label);
@@ -410,6 +415,14 @@
     }
     // Legacy response shape (single answer, no items array).
     renderSingle(body, r.answer, r.reasoning, r.raw, r.promptMode);
+  }
+
+  function appendBankNote(body, item) {
+    if (!item.source && !item.bankNotice) return;
+    const note = document.createElement("div");
+    note.className = "aqh-bank-note";
+    note.textContent = (item.source ? "来源：" + item.source + "。" : "") + (item.bankNotice || "");
+    body.appendChild(note);
   }
 
   function renderSingle(body, answerRaw, reasoningRaw, raw, modeIn) {
@@ -545,6 +558,7 @@
       head.appendChild(flag);
     }
     wrap.appendChild(head);
+    appendBankNote(wrap, it);
 
     if (pending) return wrap;
 
@@ -654,7 +668,7 @@
           renderBubble('<div class="aqh-err">未选中文本。</div>', { status: "请先在页面选中文字" });
           return;
         }
-        await askAndShow({ mode: "text", text }, "[selection]\n" + text);
+        await askAndShow({ mode: "text", captureKind: "selection", text }, "[selection]\n" + text);
       } else if (kind === "visible") {
         const dataUrl = await chooseCropAndCapture();
         await askAndShow(
@@ -667,10 +681,27 @@
           renderBubble('<div class="aqh-err">页面文本为空。</div>', { status: "请尝试其他通道" });
           return;
         }
-        await askAndShow({ mode: "text", text }, "[page text]\n" + text);
+        await askAndShow({ mode: "text", captureKind: "page", text }, "[page text]\n" + text);
       }
     } catch (e) {
       renderBubble('<div class="aqh-err">捕获失败：' + escapeHtml(e && e.message || String(e)) + '</div>');
+    }
+  }
+
+  function handleAnswerEvent(msg) {
+    const p = msg.payload || {};
+    if (!activeReq || p.reqId !== activeReq.reqId) return;
+    if (activeReq.awaitingAck) { activeReq.queued.push(msg); return; }
+    if (msg.type === "aqh/ask-status") { setStatus(p.text, true); return; }
+    if (msg.type === "aqh/ask-item" && p.item) {
+      activeReq.items[p.item.id] = p.item;
+      if (activeReq.roster.length > 1) renderProgress();
+      return;
+    }
+    if (msg.type === "aqh/ask-finish") {
+      const st = activeReq;
+      activeReq = null;
+      showAnswer({ items: Array.isArray(p.items) ? p.items : [], promptMode: p.promptMode || st.promptMode, label: st.label, bankNotice: p.bankNotice });
     }
   }
 
@@ -692,31 +723,8 @@
       sendResponse({ ok: true });
     }
     // Incremental results: each provider lands on its own, then a final settle.
-    if (msg.type === "aqh/ask-item") {
-      const p = msg.payload || {};
-      if (activeReq && p.reqId === activeReq.reqId && p.item) {
-        activeReq.items[p.item.id] = p.item;
-        if (activeReq.roster.length > 1) renderProgress();
-      }
-      return sendResponse({ ok: true });
-    }
-    if (msg.type === "aqh/ask-finish") {
-      const p = msg.payload || {};
-      if (activeReq && p.reqId === activeReq.reqId) {
-        const st = activeReq;
-        activeReq = null;
-        const items = Array.isArray(p.items) ? p.items : [];
-        if (st.roster.length <= 1) {
-          // Single provider: plain layout (or a lone failure card).
-          showAnswer({ items, promptMode: p.promptMode || st.promptMode });
-        } else {
-          const body = document.getElementById("aqh-body");
-          if (body) {
-            body.innerHTML = "";
-            renderMulti(body, items, p.promptMode || st.promptMode, st.label);
-          }
-        }
-      }
+    if (["aqh/ask-item", "aqh/ask-finish", "aqh/ask-status"].includes(msg.type)) {
+      handleAnswerEvent(msg);
       return sendResponse({ ok: true });
     }
   });

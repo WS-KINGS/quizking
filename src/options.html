@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>QuizKing · 答题王 设置</title>
 <link rel="stylesheet" href="options.css" />
+<link rel="stylesheet" href="question-bank-ui.css" />
 </head>
 <body>
 <header>
@@ -16,11 +17,44 @@
       <span class="about-star">⭐</span>
       <b>代码开源，欢迎 Star</b>
       <span class="about-sep">·</span>
-      <a class="gh-link" href="https://github.com/ops120/quizking" target="_blank" rel="noopener noreferrer">
-        github.com/ops120/quizking
+      <a class="gh-link" href="https://github.com/WS-KINGS/quizking" target="_blank" rel="noopener noreferrer">
+        github.com/WS-KINGS/quizking
       </a>
     </p>
     <p class="muted about-sub">Bug、功能建议请到仓库提 Issue；想贡献代码也欢迎 PR。</p>
+    <p class="muted about-sub">基于 <a href="https://github.com/ops120/quizking" target="_blank" rel="noopener noreferrer">ops120/quizking</a>，遵循 MIT 许可证。</p>
+  </section>
+
+  <section id="question-bank" data-question-bank>
+    <h2>我的题库</h2>
+    <p class="qb-help">上传 Word 或 TXT 文件后，搜题会先检索本机题库。精确匹配且有唯一答案时直接展示题库答案；相似题目会作为参考交给已启用的模型，未匹配时继续由模型作答。</p>
+    <label class="qb-check"><input type="checkbox" data-qb="enabled" checked /> 优先从题库匹配（即时保存）</label>
+    <div class="qb-summary" data-qb="summary">正在加载题库…</div>
+    <input type="file" data-qb="files" accept=".txt,.docx,.doc" multiple hidden aria-label="选择 Word 或 TXT 题库文件" />
+    <div class="qb-actions">
+      <button type="button" class="primary" data-qb="upload">上传 Word / TXT 题库</button>
+      <button type="button" data-qb="clear">清空题库</button>
+    </div>
+    <p class="qb-help">支持 .docx、.txt，可多选，单个文件不超过 4 MB。旧版 .doc 请先用 Word 另存为 .docx 或 TXT。题库保存在当前浏览器本机；匹配到的参考条目可能随问题发送给你配置的模型。Word 图片和公式对象不会自动转换为文字，上传后请核对试搜结果。</p>
+    <div class="qb-status" data-qb="status" role="status" aria-live="polite"></div>
+    <div class="qb-files" data-qb="file-list" aria-label="已导入题库文件"></div>
+    <details class="qb-details">
+      <summary>推荐题库格式与导入说明</summary>
+      <p class="qb-help">每道题用编号或“题目：”开头；有答案的题目加“答案：”，解析可选。也支持含“题目 / 答案 / 解析”表头的 Word 表格。同名文件会追加导入；更新题库前可删除旧文件。没有答案的条目仅用于检索参考。</p>
+      <pre class="qb-example">1. 中国的首都是哪里？
+A. 北京
+B. 上海
+答案：A
+解析：北京是中国的首都。
+
+2. 1 + 1 等于多少？
+答案：2</pre>
+    </details>
+    <label>题库试搜
+      <textarea data-qb="query" rows="3" placeholder="粘贴题干和选项，核对导入内容与匹配结果"></textarea>
+    </label>
+    <button type="button" data-qb="search">搜索题库</button>
+    <div class="qb-results" data-qb="results" aria-live="polite"></div>
   </section>
 
   <section>
@@ -119,5 +153,6 @@
   <span id="saveRes" class="muted"></span>
 </footer>
 <script src="options.js"></script>
+<script type="module" src="question-bank-ui.js"></script>
 </body>
 </html>

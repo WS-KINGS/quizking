@@ -13,6 +13,7 @@ header {
 h1 { font-size: 20px; margin: 0; }
 .sub { color: #6b7080; font-size: 13px; margin-top: 4px; }
 main { padding: 18px 28px 80px; max-width: 880px; }
+#question-bank { scroll-margin-top: 18px; }
 .promptBox { background: #f6f7fb; border: 1px solid #eaeaf2; border-radius: 8px; padding: 10px 12px; margin: 6px 0 12px; }
 .promptBox label.inner { margin: 0; }
 section {

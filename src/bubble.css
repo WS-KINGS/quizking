@@ -268,3 +268,13 @@
   font-size: 12px;
   z-index: 2147483647;
 }
+.aqh-bank-note {
+  margin-top: 10px;
+  padding: 8px;
+  border-left: 3px solid #3563ff;
+  background: rgba(53, 99, 255, 0.06);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

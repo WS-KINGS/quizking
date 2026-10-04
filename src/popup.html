@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <title>QuizKing · 答题王</title>
+<link rel="stylesheet" href="question-bank-ui.css" />
 <style>
-  body { width: 280px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2330; }
+  body { width: 320px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2330; }
   h1 { font-size: 14px; padding: 10px 12px; margin: 0; background: #3563ff; color: #fff; }
   .section { padding: 8px 12px; border-bottom: 1px solid #eee; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -41,6 +42,18 @@
       <div class="hint-tip">在 <code>chrome://extensions/shortcuts</code> 可改键。</div>
     </div>
   </div>
+  <section class="section qb-compact" data-question-bank>
+    <h2>我的题库</h2>
+    <label class="qb-check"><input type="checkbox" data-qb="enabled" checked /> 优先从题库匹配</label>
+    <div class="qb-summary" data-qb="summary">正在加载题库…</div>
+    <input type="file" data-qb="files" accept=".txt,.docx,.doc" multiple hidden aria-label="选择 Word 或 TXT 题库文件" />
+    <div class="qb-actions">
+      <button type="button" data-qb="upload">上传 Word / TXT 题库</button>
+      <button type="button" data-qb="manage">管理与试搜</button>
+    </div>
+    <p class="qb-help">支持 .docx、.txt，单个文件不超过 4 MB；旧 .doc 请先另存为 .docx。上传时请保持窗口打开。</p>
+    <div class="qb-status" data-qb="status" role="status" aria-live="polite"></div>
+  </section>
   <div class="section">
     <div class="muted" id="status">就绪。</div>
   </div>
@@ -49,5 +62,6 @@
     <span class="muted" id="keyState"></span>
   </div>
   <script src="popup.js"></script>
+  <script type="module" src="question-bank-ui.js"></script>
 </body>
 </html>
