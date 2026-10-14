@@ -99,6 +99,11 @@ B. 上海
     <label>气泡透明度 <span id="opaV">0.95</span>
       <input id="bubbleOpacity" type="range" min="0.4" max="1" step="0.05" value="0.95" />
     </label>
+    <label>截图边框透明度 <span id="captureBorderV">92%</span>
+      <input id="captureBorderTransparency" type="range" min="0" max="98" step="1" value="92" />
+    </label>
+    <p class="muted">越高越淡。默认 92%，只在拖动时显示细边框，不变暗、不显示提示条。调整后点击底部“保存”。</p>
+    <div id="captureBorderPreview" class="capture-border-preview">边框效果预览</div>
     <label class="chk">
       <input id="saveHistory" type="checkbox" checked />
       保存历史记录（最近 200 条）
@@ -140,7 +145,7 @@ B. 上海
         <tr>
           <td><kbd>Ctrl+Shift+E</kbd></td>
           <td><b>抓取可见区域</b>（截图）</td>
-          <td>整页变暗后拖框选区裁剪，截图发给多模态 LLM。推荐：题目是图片、表格、代码截图、PDF 阅读器视图，或反爬不让选。</td>
+          <td>按快捷键后直接拖框选区，页面保持原亮度，只显示淡边框；可在“外观与历史”调节透明度。松开发送，Esc 取消。截图自动排除扩展气泡和按钮。</td>
         </tr>
         <tr>
           <td><kbd>Ctrl+Shift+P</kbd></td>

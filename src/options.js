@@ -6,6 +6,7 @@ const FIELDS = [
   "promptMode",
   "reasoningPrompt",
   "bubbleOpacity",
+  "captureBorderOpacity",
   "saveHistory",
 ];
 
@@ -147,6 +148,9 @@ function load() {
     $("reasoningPrompt").value = cfg.reasoningPrompt || REASONING_PROMPT;
     $("bubbleOpacity").value = (cfg.bubbleOpacity === undefined ? 0.95 : cfg.bubbleOpacity);
     $("opaV").textContent = Number($("bubbleOpacity").value).toFixed(2);
+    const borderOpacity = Number(cfg.captureBorderOpacity ?? 0.08);
+    $("captureBorderTransparency").value = Math.round(100 * (1 - (Number.isFinite(borderOpacity) ? Math.min(1, Math.max(0.02, borderOpacity)) : 0.08)));
+    updateCapturePreview();
     $("saveHistory").checked = (cfg.saveHistory === undefined ? true : !!cfg.saveHistory);
     // Migrate any pre-existing 'answer' mode users to 'reason' so the answer-only path is gone.
     const mode = (cfg.promptMode === "answer" || !cfg.promptMode) ? "reason" : cfg.promptMode;
@@ -185,6 +189,7 @@ function save() {
     promptMode: getMode(),
     reasoningPrompt: $("reasoningPrompt").value,
     bubbleOpacity: Number($("bubbleOpacity").value),
+    captureBorderOpacity: (100 - Number($("captureBorderTransparency").value)) / 100,
     saveHistory: $("saveHistory").checked,
   };
   chrome.storage.sync.set(next, () => {
@@ -203,6 +208,12 @@ function save() {
       if (!dirty) $("saveRes").textContent = "";
     }, 3000);
   });
+}
+
+function updateCapturePreview() {
+  const transparency = Number($("captureBorderTransparency").value);
+  $("captureBorderV").textContent = transparency + "%";
+  $("captureBorderPreview").style.borderColor = `rgba(65,75,90,${(100 - transparency) / 100})`;
 }
 
 // --- Connection test ------------------------------------------------------
@@ -355,6 +366,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("bubbleOpacity").addEventListener("input", (e) => {
     $("opaV").textContent = Number(e.target.value).toFixed(2);
+    markDirty();
+  });
+  $("captureBorderTransparency").addEventListener("input", () => {
+    updateCapturePreview();
     markDirty();
   });
   // Warn the user if they try to leave the page with unsaved changes.

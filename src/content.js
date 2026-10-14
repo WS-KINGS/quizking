@@ -20,6 +20,7 @@
   // In-flight multi-provider request: { reqId, roster, items, promptMode, label }.
   let activeReq = null;
   let requestSerial = 0;
+  let captureInProgress = false;
 
   function getRuntime() { return chrome.runtime; }
 
@@ -49,6 +50,12 @@
     const v = Number((cfg && cfg.bubbleOpacity) ?? 0.95);
     if (!Number.isFinite(v)) return 0.95;
     return Math.min(1, Math.max(0.4, v));
+  }
+
+  function getCaptureBorderColor() {
+    const value = Number(cfg?.captureBorderOpacity ?? 0.08);
+    const opacity = Number.isFinite(value) ? Math.min(1, Math.max(0.02, value)) : 0.08;
+    return `rgba(65,75,90,${opacity})`;
   }
 
   function escapeHtml(s) {
@@ -151,13 +158,37 @@
   }
 
   async function chooseCropAndCapture() {
-    const full = await captureVisibleScreenshot();
-    const rect = await pickRectOnPage();
-    if (!rect) {
-      log("crop: user cancelled, using full shot");
-      return full;
+    if (captureInProgress) return null;
+    captureInProgress = true;
+    let interrupted = false;
+    const interrupt = () => { interrupted = true; };
+    window.addEventListener("blur", interrupt);
+    window.addEventListener("resize", interrupt);
+    window.addEventListener("scroll", interrupt, true);
+    try {
+      const rect = await pickRectOnPage();
+      if (!rect || interrupted || document.hidden) return null;
+      const ownUi = [document.getElementById(ROOT_ID), document.getElementById("aqh-fab")].filter(Boolean);
+      const previous = ownUi.map((el) => el.style.display);
+      let full;
+      try {
+        ownUi.forEach((el) => { el.style.display = "none"; });
+        // Let the browser paint after removing the crop UI and hiding our controls.
+        await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+        if (interrupted || document.hidden) return null;
+        full = await captureVisibleScreenshot();
+      } finally {
+        ownUi.forEach((el, i) => { el.style.display = previous[i]; });
+      }
+      if (interrupted || document.hidden) return null;
+      const cropped = await cropDataUrl(full, rect);
+      return interrupted || document.hidden ? null : cropped;
+    } finally {
+      window.removeEventListener("blur", interrupt);
+      window.removeEventListener("resize", interrupt);
+      window.removeEventListener("scroll", interrupt, true);
+      captureInProgress = false;
     }
-    return cropDataUrl(full, rect);
   }
 
   function pickRectOnPage() {
@@ -166,48 +197,41 @@
 
       const mask = document.createElement("div");
       mask.id = "aqh-mask";
+      mask.setAttribute("aria-label", "拖动鼠标框选截图区域，Esc 取消");
       mask.style.cssText =
-        "position:fixed;left:0;top:0;right:0;bottom:0;width:100%;height:100%;" +
-        "z-index:2147483647;background:rgba(0,0,0,0.25);cursor:crosshair;" +
+        "all:initial;position:fixed;display:block;left:0;top:0;right:0;bottom:0;width:100%;height:100%;" +
+        "z-index:2147483647;background:transparent;cursor:crosshair;" +
         "touch-action:none;user-select:none;";
       host.appendChild(mask);
-
-      const hint = document.createElement("div");
-      hint.id = "aqh-mask-hint";
-      hint.textContent = "拖动鼠标框选区域，ESC 取消";
-      hint.style.cssText =
-        "position:fixed;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;" +
-        "border-radius:999px;background:rgba(0,0,0,0.72);color:#fff;font-size:12px;" +
-        "z-index:2147483647;pointer-events:none;user-select:none;";
-      host.appendChild(hint);
 
       const sel = document.createElement("div");
       sel.id = "aqh-sel";
       sel.style.cssText =
-        "position:fixed;border:2px dashed #3563ff;background:rgba(53,99,255,0.18);" +
+        "all:initial;position:fixed;box-sizing:border-box;border:1px solid;background:transparent;" +
         "pointer-events:none;display:none;z-index:2147483647;";
+      sel.style.borderColor = getCaptureBorderColor();
       host.appendChild(sel);
 
-      const fab = document.getElementById("aqh-fab");
-      if (fab) fab.style.pointerEvents = "none";
-      const bubble = document.getElementById("aqh-bubble");
-      const prevBubblePE = bubble ? bubble.style.pointerEvents : "";
-      if (bubble) bubble.style.pointerEvents = "none";
-
-      let startX = 0, startY = 0, drawing = false, moveCount = 0, finished = false;
+      let startX = 0, startY = 0, drawing = false, finished = false;
+      const point = (e) => ({
+        x: Math.max(0, Math.min(window.innerWidth, e.clientX)),
+        y: Math.max(0, Math.min(window.innerHeight, e.clientY)),
+      });
 
       function done(rect, why) {
         if (finished) return;
         finished = true;
         log("done:", why, rect);
         mask.removeEventListener("mousedown", onDown);
-        mask.removeEventListener("mouseup", onUp);
         mask.removeEventListener("contextmenu", onCtx);
+        mask.removeEventListener("wheel", onWheel);
+        window.removeEventListener("mouseup", onUp, true);
         window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("keydown", onKey);
-        sel.remove(); hint.remove(); mask.remove();
-        if (fab) fab.style.pointerEvents = "";
-        if (bubble) bubble.style.pointerEvents = prevBubblePE;
+        window.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("blur", onCancel);
+        window.removeEventListener("resize", onCancel);
+        window.removeEventListener("scroll", onCancel, true);
+        sel.remove(); mask.remove();
         resolve(rect);
       }
 
@@ -216,8 +240,9 @@
         e.preventDefault();
         e.stopPropagation();
         drawing = true;
-        startX = e.clientX;
-        startY = e.clientY;
+        const p = point(e);
+        startX = p.x;
+        startY = p.y;
         sel.style.left = startX + "px";
         sel.style.top = startY + "px";
         sel.style.width = "0px";
@@ -228,11 +253,11 @@
 
       function onMove(e) {
         if (!drawing) return;
-        moveCount++;
-        const left = Math.min(startX, e.clientX);
-        const top = Math.min(startY, e.clientY);
-        const width = Math.abs(e.clientX - startX);
-        const height = Math.abs(e.clientY - startY);
+        const p = point(e);
+        const left = Math.min(startX, p.x);
+        const top = Math.min(startY, p.y);
+        const width = Math.abs(p.x - startX);
+        const height = Math.abs(p.y - startY);
         sel.style.left = left + "px";
         sel.style.top = top + "px";
         sel.style.width = width + "px";
@@ -240,53 +265,68 @@
       }
 
       function onUp(e) {
-        if (!drawing) return;
+        if (!drawing || e.button !== 0) return;
         drawing = false;
         e.preventDefault();
         e.stopPropagation();
-        const left = Math.min(startX, e.clientX);
-        const top = Math.min(startY, e.clientY);
-        const width = Math.abs(e.clientX - startX);
-        const height = Math.abs(e.clientY - startY);
-        log("up:", { left, top, width, height, moveCount });
+        const p = point(e);
+        const left = Math.min(startX, p.x);
+        const top = Math.min(startY, p.y);
+        const width = Math.abs(p.x - startX);
+        const height = Math.abs(p.y - startY);
         if (width < 3 || height < 3) return done(null, "too small");
         done({ left, top, width, height, dpr: window.devicePixelRatio || 1 }, "ok");
       }
 
       function onKey(e) {
-        if (e.key === "Escape") { drawing = false; done(null, "esc"); }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          done(null, "esc");
+        } else if ([" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", "Tab"].includes(e.key)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }
 
       function onCtx(e) { e.preventDefault(); }
+      function onWheel(e) { e.preventDefault(); }
+      function onCancel() { done(null, "viewport changed"); }
 
       mask.addEventListener("mousedown", onDown);
-      mask.addEventListener("mouseup", onUp);
       mask.addEventListener("contextmenu", onCtx);
+      mask.addEventListener("wheel", onWheel, { passive: false });
+      window.addEventListener("mouseup", onUp, true);
       window.addEventListener("mousemove", onMove);
-      window.addEventListener("keydown", onKey);
+      window.addEventListener("keydown", onKey, true);
+      window.addEventListener("blur", onCancel);
+      window.addEventListener("resize", onCancel);
+      window.addEventListener("scroll", onCancel, true);
 
       log("pick: mask shown");
     });
   }
 
   function cropDataUrl(dataUrl, rect) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const dpr = rect.dpr || 1;
-        const sx = rect.left * dpr;
-        const sy = rect.top * dpr;
-        const sw = rect.width * dpr;
-        const sh = rect.height * dpr;
-        const targetW = Math.min(1600, sw);
-        const targetH = sh * (targetW / sw);
-        const c = document.createElement("canvas");
-        c.width = targetW; c.height = targetH;
-        const ctx = c.getContext("2d");
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
-        resolve(c.toDataURL("image/jpeg", 0.85));
+        try {
+          const dpr = rect.dpr || 1;
+          const sx = rect.left * dpr;
+          const sy = rect.top * dpr;
+          const sw = rect.width * dpr;
+          const sh = rect.height * dpr;
+          const targetW = Math.min(1600, sw);
+          const targetH = sh * (targetW / sw);
+          const c = document.createElement("canvas");
+          c.width = targetW; c.height = targetH;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
+          resolve(c.toDataURL("image/jpeg", 0.85));
+        } catch (e) { reject(e); }
       };
-      img.onerror = () => resolve(dataUrl);
+      img.onerror = () => reject(new Error("截图裁剪失败，请重新框选。"));
       img.src = dataUrl;
     });
   }
@@ -683,6 +723,7 @@
         await askAndShow({ mode: "text", captureKind: "selection", text }, "[selection]\n" + text);
       } else if (kind === "visible") {
         const dataUrl = await chooseCropAndCapture();
+        if (!dataUrl) return;
         await askAndShow(
           { mode: "image", imageDataUrl: dataUrl, text: "请分析截图中题目并回答。" },
           "[visible screenshot]"
@@ -741,15 +782,20 @@
     }
   });
 
-  // Live-apply opacity changes (e.g. saved from the options page) to any open bubble.
+  // Apply appearance settings to open pages without requiring a refresh.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync" || !changes.bubbleOpacity) return;
-    const v = Number(changes.bubbleOpacity.newValue);
-    if (!Number.isFinite(v)) return;
+    if (area !== "sync") return;
     if (!cfg) cfg = {};
-    cfg.bubbleOpacity = v;
-    const bubble = document.getElementById("aqh-bubble");
-    if (bubble) bubble.style.setProperty("--aqh-o", String(getCssOpacity()));
+    if (changes.bubbleOpacity) {
+      cfg.bubbleOpacity = changes.bubbleOpacity.newValue;
+      const bubble = document.getElementById("aqh-bubble");
+      if (bubble) bubble.style.setProperty("--aqh-o", String(getCssOpacity()));
+    }
+    if (changes.captureBorderOpacity) {
+      cfg.captureBorderOpacity = changes.captureBorderOpacity.newValue;
+      const selection = document.getElementById("aqh-sel");
+      if (selection) selection.style.borderColor = getCaptureBorderColor();
+    }
   });
 
   (async () => {

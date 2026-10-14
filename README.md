@@ -4,7 +4,7 @@
 
 > 把网页上看到的题目（截图 / 划词 / DOM）丢给 OpenAI 兼容 LLM，把答案 / 解析吐回悬浮气泡。
 
-[![Release](https://img.shields.io/badge/release-v0.4.1-3563ff)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.2-3563ff)](../../releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/manifest-V3-3563ff)](#技术栈)
 [![Chrome 114+](https://img.shields.io/badge/chrome-114%2B-4285f4)](#安装)
@@ -169,7 +169,7 @@ D. 金星
 | 快捷键 | 作用 | 何时用 |
 | --- | --- | --- |
 | `Ctrl+Shift+Q`（macOS `⌘⇧Q`） | **抓取选区** | 先在页面选中一段文字，按后把选中文本发给 LLM。适合：网页上能直接选中的题目。 |
-| `Ctrl+Shift+E` | **抓取可见区域**（截图） | 整页变暗后拖框选区裁剪，截图发给多模态 LLM。适合：题目是图片、表格、代码截图、PDF 阅读器、反爬不让选的页面。 |
+| `Ctrl+Shift+E` | **抓取可见区域**（截图） | 直接拖框裁剪，页面保持原亮度；只在拖动时显示淡边框，默认透明度 92%，可在设置的“外观与历史”中调节。松开发送，Esc 取消。截图自动排除扩展气泡和按钮。 |
 | `Ctrl+Shift+P` | **抓取整页 DOM 文本** <sub>⚠ 实验</sub> | 把整页 `innerText` 前 6000 字符发给 LLM。适合：长文章、整段题文、多选合集。⚠ **实验性**：长文本会显著增加 token 消耗与延迟；多数场景用「划词」更准。 |
 | `Ctrl+Shift+H` | **显示 / 隐藏气泡** | 答题完成后想收起气泡（不丢内容），再按一次又出现。 |
 

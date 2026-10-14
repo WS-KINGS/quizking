@@ -148,3 +148,13 @@ footer {
   gap: 12px;
   align-items: center;
 }
+.capture-border-preview {
+  box-sizing: border-box;
+  width: 240px;
+  padding: 16px;
+  margin: 8px 0 20px;
+  border: 1px solid rgba(65, 75, 90, 0.08);
+  color: #777;
+  font-size: 12px;
+  text-align: center;
+}

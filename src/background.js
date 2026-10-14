@@ -30,6 +30,7 @@ const LEGACY_KEYS = ["endpoint", "apiKey", "model"];
 const DEFAULTS = {
   temperature: 0.2,
   bubbleOpacity: 0.95,
+  captureBorderOpacity: 0.08,
   systemPrompt:
     "你是一位严谨的解题助手。用户会给你网页上截取的一道题目（可能附文本和图片）。请仔细阅读，输出严格的 JSON：{\"answer\":\"...\", \"reasoning\":\"...\"}，不要任何额外文字、不要 markdown 代码块。answer 用最简洁的方式给出最终答案；reasoning 解释关键步骤（中文）。",
   promptMode: "reason",
