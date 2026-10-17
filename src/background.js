@@ -31,7 +31,8 @@ const DEFAULTS = {
   temperature: 0.2,
   bubbleOpacity: 0.95,
   captureBorderOpacity: 0.08,
-  screenshotDisplay: "sidepanel",
+  screenshotDisplay: "overlay",
+  overlayOpacity: 0.4,
   systemPrompt:
     "你是一位严谨的解题助手。用户会给你网页上截取的一道题目（可能附文本和图片）。请仔细阅读，输出严格的 JSON：{\"answer\":\"...\", \"reasoning\":\"...\"}，不要任何额外文字、不要 markdown 代码块。answer 用最简洁的方式给出最终答案；reasoning 解释关键步骤（中文）。",
   promptMode: "reason",
@@ -124,9 +125,18 @@ async function sendToContent(tab, type, payload) {
 async function triggerCapture(kind) {
   const tab = await getActiveTab();
   if (!tab) throw new Error("没有可用的网页。");
-  if (kind === "visible") {
+  if (kind === "visible" || kind === "toggle") {
     const cfg = await ensureDefaults();
-    if (cfg.screenshotDisplay !== "bubble") return captureToSidepanel(tab, cfg);
+    if (kind === "toggle" && cfg.screenshotDisplay === "overlay") {
+      // A visibility toggle must never inject UI into a page with no answer.
+      try {
+        const result = await chrome.tabs.sendMessage(tab.id, { type: "aqh/overlay-toggle" });
+        if (result?.handled) return result;
+      } catch { /* This page may only have a selection-answer bubble. */ }
+      try { return await chrome.tabs.sendMessage(tab.id, { type: "aqh/toggle-existing" }); }
+      catch { return { ok: true }; }
+    }
+    if (kind === "visible" && cfg.screenshotDisplay !== "bubble") return captureInBackground(tab, cfg);
   }
   return sendToContent(tab, kind === "show-fab" ? "aqh/show-fab" : "aqh/capture", { kind });
 }
@@ -145,11 +155,16 @@ async function assertCaptureTab(tab) {
   if (!window.focused) throw new Error("浏览器窗口已失去焦点，本次截图已取消。");
 }
 
-async function captureToSidepanel(tab, cfg) {
+async function captureInBackground(tab, cfg) {
   if (sideCaptureBusy) return { busy: true };
   sideCaptureBusy = true;
   const reqId = newReqId();
   const active = activeProviders(cfg);
+  let overlayDocumentId;
+  let overlayReady = false;
+  const sendOverlay = (type, payload) => chrome.tabs.sendMessage(
+    tab.id, { type, payload }, { documentId: overlayDocumentId }
+  );
   const snapshot = {
     reqId, tabId: tab.id, state: "working", status: "正在截取当前可见区域…",
     pending: active.map(({ id, label, model }) => ({ id, label, model })),
@@ -159,7 +174,17 @@ async function captureToSidepanel(tab, cfg) {
   const publish = () => {
     const value = { ...snapshot, items: [...snapshot.items], updatedAt: Date.now() };
     // Keep progress writes ordered; never store the screenshot or API credentials.
-    writes = writes.then(() => chrome.storage.session.set({ sidepanelResult: value }));
+    writes = writes.then(async () => {
+      await chrome.storage.session.set({ sidepanelResult: value });
+      if (overlayReady) {
+        // Navigation can remove this document. Never inject a result into its replacement.
+        try {
+          const shown = await sendOverlay("aqh/overlay-result", value);
+          if (!shown?.ok) overlayReady = false;
+        }
+        catch { overlayReady = false; }
+      }
+    });
     return writes;
   };
   const emit = (type, value) => {
@@ -178,7 +203,34 @@ async function captureToSidepanel(tab, cfg) {
   try {
     await publish();
     await assertCaptureTab(tab);
-    const imageDataUrl = await captureVisibleToBase64(tab);
+    if (cfg.screenshotDisplay === "overlay") {
+      const injected = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, files: ["answer-overlay.js"],
+      });
+      overlayDocumentId = injected?.find((result) => result.frameId === 0)?.documentId;
+      if (!overlayDocumentId) throw new Error("无法确定当前页面，截图已取消。");
+    }
+    let imageDataUrl;
+    try {
+      if (overlayDocumentId) {
+        const prepared = await sendOverlay("aqh/overlay-prepare", { reqId, opacity: cfg.overlayOpacity });
+        if (!prepared?.ok) throw new Error("答案浮层未准备完成，截图已取消。");
+        overlayReady = true;
+      }
+      if (overlayDocumentId) await assertCaptureTab(tab);
+      imageDataUrl = await captureVisibleToBase64(tab);
+    } finally {
+      if (overlayDocumentId) {
+        try {
+          const restored = await sendOverlay("aqh/overlay-restore", { reqId });
+          if (!restored?.ok) throw new Error("截图请求已过期。");
+        }
+        catch {
+          overlayReady = false;
+          throw new Error("当前页面已改变或无法响应，截图已取消。");
+        }
+      }
+    }
     await assertCaptureTab(tab);
     await runAsk({
       reqId, tabId: tab.id, cfg, active, promptMode: cfg.promptMode || "reason", emit,
@@ -202,8 +254,10 @@ async function captureToSidepanel(tab, cfg) {
 async function captureVisibleToBase64(tab) {
   // chrome 旗舰 API：直接拿可见窗口快照（PNG）。
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("截图等待超时，请重试。")), 8000);
     try {
       chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {
+        clearTimeout(timeout);
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -215,6 +269,7 @@ async function captureVisibleToBase64(tab) {
         resolve(dataUrl);
       });
     } catch (e) {
+      clearTimeout(timeout);
       reject(e);
     }
   });
@@ -497,7 +552,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === MENU_IDS.selection) return triggerCapture("selection");
   if (info.menuItemId === MENU_IDS.visible) return triggerCapture("visible");
   if (info.menuItemId === MENU_IDS.page) return triggerCapture("page");
-  if (info.menuItemId === MENU_IDS.close) return sendToContent(tab, "aqh/close", {});
+  if (info.menuItemId === MENU_IDS.close) {
+    try { await chrome.tabs.sendMessage(tab.id, { type: "aqh/overlay-clear" }); } catch { /* No overlay. */ }
+    return sendToContent(tab, "aqh/close", {});
+  }
 });
 
 chrome.commands.onCommand.addListener(async (cmd) => {
@@ -517,7 +575,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "aqh/capture-sidepanel" && sender.tab) {
         const cfg = await ensureDefaults();
         sendResponse({ ok: true });
-        captureToSidepanel(sender.tab, cfg).catch((error) => console.warn("[aqh] 截图失败", error?.message));
+        captureInBackground(sender.tab, cfg).catch((error) => console.warn("[aqh] 截图失败", error?.message));
         return;
       }
       if (msg.type === "aqh/trigger") {

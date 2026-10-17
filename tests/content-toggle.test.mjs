@@ -227,6 +227,10 @@ test('the manifest shortcut is Ctrl+Shift+H and the background forwards it to th
   const event = () => ({ addListener() {} });
   const chrome = {
     runtime: { onInstalled: event(), onMessage: event() },
+    storage: { sync: {
+      get(_keys, callback) { callback({ screenshotDisplay: 'bubble', providers: [] }); },
+      set() {},
+    } },
     contextMenus: { onClicked: event() },
     commands: { onCommand: { addListener(fn) { command = fn; } } },
     tabs: {
@@ -276,6 +280,20 @@ test('toggling a completed answer preserves the answer, reasoning and file sourc
   assert.ok(!bubble.classList.contains('aqh-hide'));
   assert.equal(bubble.innerHTML, answer);
   assert.equal(h.asks.length, 1, 'Showing an answer must not request the model again');
+});
+
+test('existing-only toggle preserves a selection answer without creating an empty bubble', async () => {
+  const h = createContentHarness();
+  assert.equal(h.send('aqh/toggle-existing').handled, false);
+  assert.equal(h.bubble(), null);
+  h.trigger('selection');
+  await flush();
+  h.finish('A');
+  assert.equal(h.send('aqh/toggle-existing').handled, true);
+  assert.ok(h.bubble().classList.contains('aqh-hide'));
+  h.send('aqh/toggle-existing');
+  assert.ok(!h.bubble().classList.contains('aqh-hide'));
+  assert.match(h.bubble().textContent, /A/);
 });
 
 test('when no bubble exists, toggle displays an actionable empty-state message', () => {

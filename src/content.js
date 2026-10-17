@@ -1,5 +1,5 @@
 /**
- * QuizKing · 答题王 — content script injected into every page.
+ * QuizKing · 答题王 — content script loaded on demand for page features.
  * @license MIT
  *
  * Three capture modes:
@@ -722,7 +722,7 @@
         }
         await askAndShow({ mode: "text", captureKind: "selection", text }, "[selection]\n" + text);
       } else if (kind === "visible") {
-        if (cfg?.screenshotDisplay === "sidepanel") {
+        if (["sidepanel", "overlay"].includes(cfg?.screenshotDisplay)) {
           await callBg("aqh/capture-sidepanel");
           return;
         }
@@ -771,6 +771,11 @@
     if (msg.type === "aqh/close") {
       closeBubble();
       return sendResponse({ ok: true });
+    }
+    if (msg.type === "aqh/toggle-existing") {
+      const bubble = document.getElementById("aqh-bubble");
+      if (bubble) bubble.classList.toggle("aqh-hide");
+      return sendResponse({ ok: true, handled: !!bubble });
     }
     if (msg.type === "aqh/show-fab") {
       const shown = toggleFab();

@@ -24,7 +24,8 @@ const entry = (extra = {}) => ({
 const answerResponse = (answer = '模型答案') => JSON.stringify({ answer, reasoning: '模型解析' });
 
 function createHarness(options = {}) {
-  const sync = { saveHistory: false, providers: [], ...options.config };
+  const sync = { saveHistory: false, providers: [], screenshotDisplay: 'sidepanel', ...options.config };
+  for (const key of Object.keys(sync)) if (sync[key] === undefined) delete sync[key];
   const local = { history: [] };
   const session = {};
   const sessionWrites = [];
@@ -84,6 +85,7 @@ function createHarness(options = {}) {
       },
       captureVisibleTab(windowId, settings, callback) {
         captures.push(clone({ windowId, settings }));
+        timeline.push('captureVisibleTab');
         Promise.resolve().then(() => options.capture ? options.capture() : 'data:image/png;base64,CAPTURED_IMAGE')
           .then((image) => {
             chrome.runtime.lastError = options.captureError ? { message: options.captureError } : null;
@@ -91,21 +93,28 @@ function createHarness(options = {}) {
             chrome.runtime.lastError = null;
           });
       },
-      sendMessage(tabId, message, callback) {
-        const record = clone({ tabId, ...message });
+      sendMessage(tabId, message, sendOptions, callback) {
+        if (typeof sendOptions === 'function') callback = sendOptions;
+        const record = clone({ tabId, ...message, ...(sendOptions && typeof sendOptions === 'object' ? { options: sendOptions } : {}) });
         sent.push(record);
         timeline.push(message.type);
         for (const waiter of waiters) waiter(record);
         if (!contentReady) return Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'));
+        if (options.sendMessage) return Promise.resolve().then(() => options.sendMessage(record));
         callback?.();
-        return Promise.resolve();
+        return Promise.resolve({ ok: true });
       },
       create(settings) { focusChanges.push({ kind: 'tabs.create', settings }); return Promise.resolve({}); },
       update(...args) { focusChanges.push({ kind: 'tabs.update', args }); return Promise.resolve({}); },
     },
     scripting: {
       async insertCSS(settings) { injections.push({ kind: 'css', ...clone(settings) }); },
-      async executeScript(settings) { injections.push({ kind: 'script', ...clone(settings) }); contentReady = true; },
+      async executeScript(settings) {
+        injections.push({ kind: 'script', ...clone(settings) });
+        if (options.injectError) throw new Error(options.injectError);
+        contentReady = true;
+        return [{ frameId: 0, documentId: 'doc-31' }];
+      },
     },
     windows: {
       async get(id) {
@@ -125,7 +134,10 @@ function createHarness(options = {}) {
   };
   const context = vm.createContext({
     chrome, self: {}, console: { log() {}, warn() {} },
-    AbortController, setTimeout, clearTimeout,
+    AbortController, clearTimeout,
+    setTimeout(callback, delay, ...args) {
+      return setTimeout(callback, options.timerDelay ? options.timerDelay(delay) : delay, ...args);
+    },
     async getBank() {
       bankReads += 1;
       if (options.bankError) throw new Error(options.bankError);
@@ -463,7 +475,7 @@ function assertNoPageSideEffects(h) {
   assert.deepEqual(h.focusChanges, [], 'Capturing must not open or focus any UI');
 }
 
-test('the default screenshot command stores its result outside the page and never opens UI', async () => {
+test('the selected side-panel screenshot mode stores its result outside the page and never opens UI', async () => {
   const h = createHarness({ config: { providers: [provider()] }, noContentScript: true });
   await h.command('capture-visible');
   const result = h.session.sidepanelResult;
@@ -656,4 +668,221 @@ test('selection capture keeps the existing message route when its page script is
   assert.deepEqual(h.injections, []);
   assert.deepEqual(h.sessionWrites, []);
   assert.equal(h.captures.length, 0);
+});
+
+function assertOverlayMessagesStayInDocument(h) {
+  assert.ok(h.sent.length > 0);
+  assert.ok(h.sent.every((message) => message.type.startsWith('aqh/overlay-')));
+  assert.ok(h.sent.every((message) => message.options?.documentId === 'doc-31'));
+  assert.deepEqual(h.focusChanges, [], 'The overlay must never open or activate another UI');
+  assert.doesNotMatch(JSON.stringify([h.sent, h.sessionWrites, h.local]), /data:image\/|CAPTURED_IMAGE|secret-key|apiKey/);
+}
+
+test('new settings default to the answer overlay and hide it before capture, then restore it before solving', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: undefined }, noContentScript: true,
+  });
+  await h.command('capture-visible');
+  assert.equal(h.sync.screenshotDisplay, 'overlay');
+  assert.equal(h.sync.overlayOpacity, 0.4);
+  assert.deepEqual(h.injections, [{ kind: 'script', target: { tabId: 31 }, files: ['answer-overlay.js'] }]);
+  const prepare = h.sent.find((message) => message.type === 'aqh/overlay-prepare');
+  const restore = h.sent.find((message) => message.type === 'aqh/overlay-restore');
+  assert.equal(prepare.payload.opacity, 0.4);
+  assert.equal(prepare.payload.reqId, restore.payload.reqId);
+  assert.ok(h.timeline.indexOf('aqh/overlay-prepare') < h.timeline.indexOf('captureVisibleTab'));
+  assert.ok(h.timeline.indexOf('captureVisibleTab') < h.timeline.indexOf('aqh/overlay-restore'));
+  assert.ok(h.timeline.indexOf('aqh/overlay-restore') < h.timeline.indexOf('fetch'));
+  const finished = h.sent.find((message) => message.type === 'aqh/overlay-result' && message.payload.state === 'finished');
+  assert.equal(finished.payload.items[0].answer, '模型答案');
+  assert.equal(finished.payload.reqId, prepare.payload.reqId);
+  assert.deepEqual(finished.payload, h.session.sidepanelResult);
+  assert.equal(h.requests.length, 1);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('overlay capture waits for the hide acknowledgement and uses the configured opacity', async () => {
+  let releasePreparation;
+  const prepared = new Promise((resolve) => { releasePreparation = resolve; });
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay', overlayOpacity: 0.23 },
+    sendMessage(message) { return message.type === 'aqh/overlay-prepare' ? prepared : { ok: true }; },
+  });
+  const work = h.command('capture-visible');
+  const prepare = await h.waitFor((message) => message.type === 'aqh/overlay-prepare');
+  assert.equal(prepare.payload.opacity, 0.23);
+  assert.equal(h.captures.length, 0);
+  assert.equal(h.requests.length, 0);
+  releasePreparation({ ok: true });
+  await work;
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 1);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('a failed overlay preparation restores the existing overlay and never captures or calls a model', async () => {
+  for (const failure of ['rejected', 'closed channel']) {
+    const h = createHarness({
+      config: { providers: [provider()], screenshotDisplay: 'overlay' },
+      sendMessage(message) {
+        if (message.type === 'aqh/overlay-prepare') {
+          if (failure === 'closed channel') throw new Error('Message channel closed');
+          return { ok: false };
+        }
+        return { ok: true };
+      },
+    });
+    await h.command('capture-visible');
+    assert.equal(h.captures.length, 0);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.session.sidepanelResult.state, 'error');
+    assert.equal(h.sent.filter((message) => message.type === 'aqh/overlay-restore').length, 1);
+    assertOverlayMessagesStayInDocument(h);
+  }
+});
+
+test('a browser screenshot failure still restores the overlay and reports the error', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' }, captureError: 'Screenshot permission denied',
+  });
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.ok(h.timeline.indexOf('captureVisibleTab') < h.timeline.indexOf('aqh/overlay-restore'));
+  assert.match(h.session.sidepanelResult.error, /permission denied/);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('an overlay injection failure cancels cleanly without capturing, calling models, or loading the legacy bubble', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' }, injectError: 'Cannot access this page',
+  });
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.match(h.session.sidepanelResult.error, /Cannot access this page/);
+  assert.equal(h.captures.length, 0);
+  assert.equal(h.requests.length, 0);
+  assert.deepEqual(h.sent, []);
+  assert.deepEqual(h.injections, [{ kind: 'script', target: { tabId: 31 }, files: ['answer-overlay.js'] }]);
+  assert.deepEqual(h.focusChanges, []);
+});
+
+test('changing tabs while the overlay is being hidden restores it and cancels capture', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' },
+    queryTab(_query, index) { return { id: index >= 2 ? 32 : 31, windowId: 9 }; },
+  });
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.equal(h.captures.length, 0);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.sent.filter((message) => message.type === 'aqh/overlay-restore').length, 1);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('navigation during solving never redirects an answer to a replacement document or injects again', async () => {
+  let navigated = false;
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' },
+    respond() { navigated = true; return answerResponse('原页面的答案'); },
+    sendMessage(message) {
+      if (navigated && message.type === 'aqh/overlay-result') throw new Error('No document with id doc-31');
+      return { ok: true };
+    },
+  });
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'finished');
+  assert.equal(h.session.sidepanelResult.items[0].answer, '原页面的答案');
+  assert.equal(h.injections.length, 1, 'Navigation must never trigger reinjection of a result');
+  assert.equal(h.requests.length, 1);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('navigation that prevents restoring the overlay cancels before submitting the screenshot', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' },
+    sendMessage(message) {
+      if (message.type === 'aqh/overlay-restore') throw new Error('No document with id doc-31');
+      return { ok: true };
+    },
+  });
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.equal(h.injections.length, 1);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('a rejected overlay restoration cancels before submitting the screenshot', async () => {
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' },
+    sendMessage(message) { return { ok: message.type !== 'aqh/overlay-restore' }; },
+  });
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('a missing screenshot callback times out after 8 seconds, restores the overlay, and releases the capture lock', async () => {
+  const delays = [];
+  let captureCount = 0;
+  const h = createHarness({
+    config: { providers: [provider()], screenshotDisplay: 'overlay' },
+    timerDelay(delay) { delays.push(delay); return delay === 8000 ? 5 : delay; },
+    capture() {
+      captureCount += 1;
+      return captureCount === 1 ? new Promise(() => {}) : 'data:image/png;base64,CAPTURED_IMAGE';
+    },
+  });
+  await h.command('capture-visible');
+  assert.deepEqual(delays, [8000]);
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.match(h.session.sidepanelResult.error, /截图等待超时/);
+  assert.equal(h.sent.filter((message) => message.type === 'aqh/overlay-restore').length, 1);
+  const canceledReqId = h.session.sidepanelResult.reqId;
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 2);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.session.sidepanelResult.state, 'finished');
+  assert.notEqual(h.session.sidepanelResult.reqId, canceledReqId);
+  assertOverlayMessagesStayInDocument(h);
+});
+
+test('an existing overlay handles the visibility shortcut without toggling the traditional bubble', async () => {
+  const h = createHarness({
+    config: { screenshotDisplay: 'overlay' },
+    sendMessage() { return { ok: true, handled: true }; },
+  });
+  await h.command('toggle-bubble');
+  assert.deepEqual(h.sent, [{ tabId: 31, type: 'aqh/overlay-toggle' }]);
+  assert.deepEqual(h.injections, []);
+  assert.deepEqual(h.sessionWrites, []);
+  assert.deepEqual(h.focusChanges, []);
+  assert.equal(h.captures.length, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test('a missing or unhandled overlay falls back to toggling only an existing traditional bubble without injection', async () => {
+  for (const noContentScript of [false, true]) {
+    const h = createHarness({
+      config: { screenshotDisplay: 'overlay' }, noContentScript,
+      sendMessage() { return { ok: true, handled: false }; },
+    });
+    await h.command('toggle-bubble');
+    assert.deepEqual(h.sent, [
+      { tabId: 31, type: 'aqh/overlay-toggle' },
+      { tabId: 31, type: 'aqh/toggle-existing' },
+    ]);
+    assert.deepEqual(h.injections, []);
+    assert.deepEqual(h.sessionWrites, []);
+    assert.deepEqual(h.focusChanges, []);
+    assert.equal(h.captures.length, 0);
+    assert.equal(h.requests.length, 0);
+  }
 });

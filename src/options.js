@@ -6,6 +6,7 @@ const FIELDS = [
   "promptMode",
   "reasoningPrompt",
   "bubbleOpacity",
+  "overlayOpacity",
   "captureBorderOpacity",
   "screenshotDisplay",
   "saveHistory",
@@ -149,10 +150,13 @@ function load() {
     $("reasoningPrompt").value = cfg.reasoningPrompt || REASONING_PROMPT;
     $("bubbleOpacity").value = (cfg.bubbleOpacity === undefined ? 0.95 : cfg.bubbleOpacity);
     $("opaV").textContent = Number($("bubbleOpacity").value).toFixed(2);
+    const overlayOpacity = Number(cfg.overlayOpacity ?? 0.4);
+    $("overlayTransparency").value = Math.round(100 * (1 - (Number.isFinite(overlayOpacity) ? Math.min(0.9, Math.max(0.15, overlayOpacity)) : 0.4)));
+    updateOverlayPreview();
     const borderOpacity = Number(cfg.captureBorderOpacity ?? 0.08);
     $("captureBorderTransparency").value = Math.round(100 * (1 - (Number.isFinite(borderOpacity) ? Math.min(1, Math.max(0.02, borderOpacity)) : 0.08)));
     updateCapturePreview();
-    $("screenshotDisplay").value = cfg.screenshotDisplay === "bubble" ? "bubble" : "sidepanel";
+    $("screenshotDisplay").value = ["overlay", "sidepanel", "bubble"].includes(cfg.screenshotDisplay) ? cfg.screenshotDisplay : "overlay";
     $("saveHistory").checked = (cfg.saveHistory === undefined ? true : !!cfg.saveHistory);
     // Migrate any pre-existing 'answer' mode users to 'reason' so the answer-only path is gone.
     const mode = (cfg.promptMode === "answer" || !cfg.promptMode) ? "reason" : cfg.promptMode;
@@ -191,6 +195,7 @@ function save() {
     promptMode: getMode(),
     reasoningPrompt: $("reasoningPrompt").value,
     bubbleOpacity: Number($("bubbleOpacity").value),
+    overlayOpacity: (100 - Number($("overlayTransparency").value)) / 100,
     captureBorderOpacity: (100 - Number($("captureBorderTransparency").value)) / 100,
     screenshotDisplay: $("screenshotDisplay").value,
     saveHistory: $("saveHistory").checked,
@@ -217,6 +222,12 @@ function updateCapturePreview() {
   const transparency = Number($("captureBorderTransparency").value);
   $("captureBorderV").textContent = transparency + "%";
   $("captureBorderPreview").style.borderColor = `rgba(65,75,90,${(100 - transparency) / 100})`;
+}
+
+function updateOverlayPreview() {
+  const transparency = Number($("overlayTransparency").value);
+  $("overlayOpacityV").textContent = transparency + "%";
+  $("overlayPreview").style.opacity = String((100 - transparency) / 100);
 }
 
 // --- Connection test ------------------------------------------------------
@@ -313,7 +324,7 @@ function refreshBubbleShortcut() {
     const value = error ? "读取失败" : shortcut || "未分配快捷键";
     $("bubbleShortcutValue").textContent = value;
     $("bubbleShortcutTableValue").textContent = value;
-    shortcutStatus(error ? "无法读取当前快捷键：" + error + "。可点击“设置快捷键”在 Chrome 中查看。" : shortcut ? "当前已分配，可在网页中按此快捷键隐藏或恢复答案气泡。" : "尚未分配或存在按键冲突，请点击“设置快捷键”分配可用按键。", Boolean(error));
+    shortcutStatus(error ? "无法读取当前快捷键：" + error + "。可点击“设置快捷键”在 Chrome 中查看。" : shortcut ? "当前已分配，可在网页中按此快捷键隐藏或恢复答案浮层、气泡。" : "尚未分配或存在按键冲突，请点击“设置快捷键”分配可用按键。", Boolean(error));
   };
   try {
     chrome.commands.getAll((commands) => {
@@ -373,6 +384,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("captureBorderTransparency").addEventListener("input", () => {
     updateCapturePreview();
+    markDirty();
+  });
+  $("overlayTransparency").addEventListener("input", () => {
+    updateOverlayPreview();
     markDirty();
   });
   $("screenshotDisplay").addEventListener("change", markDirty);

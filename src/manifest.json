@@ -3,7 +3,7 @@
   "name": "__MSG_extName__",
   "default_locale": "zh_CN",
   "description": "__MSG_extDescription__",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "minimum_chrome_version": "116",
   "action": {
     "default_title": "QuizKing · 答题王",
@@ -36,7 +36,7 @@
     },
     "capture-visible": {
       "suggested_key": { "default": "Ctrl+Shift+E", "mac": "Command+Shift+E" },
-      "description": "截图当前可见区域，默认在浏览器侧栏显示结果；可在设置改为网页框选"
+      "description": "截图当前可见区域，按设置自动显示精简答案浮层或保留到侧栏"
     },
     "capture-page": {
       "suggested_key": { "default": "Ctrl+Shift+P", "mac": "Command+Shift+P" },
@@ -44,7 +44,7 @@
     },
     "toggle-bubble": {
       "suggested_key": { "default": "Ctrl+Shift+H", "mac": "Command+Shift+H" },
-      "description": "显示或隐藏气泡（保留已有答案和解析）"
+      "description": "显示或隐藏答案浮层/气泡（保留已有答案）"
     }
   },
   "icons": {

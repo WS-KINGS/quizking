@@ -98,11 +98,18 @@ B. 上海
     <h2>外观与历史</h2>
     <label>截图结果显示位置
       <select id="screenshotDisplay">
-        <option value="sidepanel">浏览器侧栏（默认，截取当前可见区域）</option>
+        <option value="overlay">精简答案浮层（自动显示）</option>
+        <option value="sidepanel">浏览器侧栏（手动打开）</option>
         <option value="bubble">网页气泡（可拖框裁剪）</option>
       </select>
     </label>
-    <p class="muted">侧栏模式通过快捷键后台截图，不自动打开窗口，也不添加网页选框或气泡。可从扩展弹窗手动打开“截图结果侧栏”。手动打开/点击侧栏仍可能造成焦点变化；此模式不保证平台无法检测。使用过网页气泡后请刷新网页，以移除已加载的页面控件。</p>
+    <p class="muted">精简浮层为新安装的默认模式：后台截图后自动显示答案，不响应鼠标、不主动抢焦点，按 Ctrl+Shift+H 隐藏或显示（可自定义快捷键）。浮层会在网页中添加元素，不能承诺网站无法检测。升级保留原来的显示模式。</p>
+    <p class="muted">侧栏模式不添加网页选框或答案浮层，结果保留在侧栏，可从扩展弹窗手动打开“截图结果侧栏”。打开或点击弹窗、侧栏可能使网页失焦。使用过网页功能后请刷新网页，以移除已加载的页面控件。</p>
+    <label>精简浮层透明度 <span id="overlayOpacityV">60%</span>
+      <input id="overlayTransparency" type="range" min="10" max="85" step="1" value="60" />
+    </label>
+    <p class="muted">越高越淡，默认 60%。浮层使用 12px 小字，无边框；调整后点击底部“保存”。</p>
+    <div id="overlayPreview" style="font-size: 12px; line-height: 1.5; border: 0; background: transparent; box-shadow: none; opacity: 0.4; pointer-events: none;">答案：A</div>
     <label>气泡透明度 <span id="opaV">0.95</span>
       <input id="bubbleOpacity" type="range" min="0.4" max="1" step="0.05" value="0.95" />
     </label>
@@ -125,7 +132,7 @@ B. 上海
   <section>
     <h2>快捷键</h2>
     <div class="shortcut-setting">
-      <div class="shortcut-setting-label">气泡显示/隐藏快捷键</div>
+      <div class="shortcut-setting-label">答案浮层 / 气泡显示与隐藏快捷键</div>
       <div class="shortcut-setting-value" id="bubbleShortcutValue">正在读取…</div>
       <div class="row">
         <button id="setBubbleShortcut" type="button" class="primary">设置快捷键</button>
@@ -152,7 +159,7 @@ B. 上海
         <tr>
           <td><kbd>Ctrl+Shift+E</kbd></td>
           <td><b>抓取可见区域</b>（截图）</td>
-          <td>默认后台截取当前可见区域，在浏览器侧栏显示结果；不自动打开侧栏。在“外观与历史”可改为网页框选模式，并调节选框透明度。</td>
+          <td>根据“外观与历史”中的设置显示截图答案。精简浮层自动显示；侧栏需手动打开；网页气泡模式可拖框裁剪。</td>
         </tr>
         <tr>
           <td><kbd>Ctrl+Shift+P</kbd></td>
@@ -161,8 +168,8 @@ B. 上海
         </tr>
         <tr>
           <td><kbd id="bubbleShortcutTableValue">正在读取…</kbd></td>
-          <td><b>显示 / 隐藏气泡</b></td>
-          <td>答题完成后想收起气泡（不删除内容），再按一次又出现。气泡拖到屏幕任何位置可记忆。</td>
+          <td><b>显示 / 隐藏答案浮层或气泡</b></td>
+          <td>隐藏后保留内容，再按一次恢复。精简浮层不响应鼠标；原网页气泡可拖动并记忆位置。</td>
         </tr>
       </tbody>
     </table>
