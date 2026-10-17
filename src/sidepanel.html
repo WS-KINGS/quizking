@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>截图结果 · QuizKing</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body class="is-compact" data-state="empty">
+  <header class="page-head">
+    <div>
+      <p class="brand">QuizKing</p>
+      <h1>截图结果</h1>
+    </div>
+    <div class="actions">
+      <button type="button" id="view-toggle" aria-label="展开详细信息">详细</button>
+      <button type="button" id="clear" title="清空当前显示，不取消正在进行的请求">清空</button>
+      <button type="button" id="settings">设置</button>
+    </div>
+  </header>
+  <main>
+    <p class="shortcut"><kbd>Ctrl+Shift+E</kbd> 后台截图当前可见区域</p>
+    <p class="shortcut-note detail-only">macOS 使用 ⌘；快捷键以浏览器扩展设置为准。请回到原网页后按快捷键。</p>
+    <section class="status-box" aria-label="请求状态">
+      <p id="status" role="status" aria-live="polite">等待截图</p>
+      <p id="updated" class="muted detail-only" hidden></p>
+    </section>
+    <p id="notice" class="notice detail-only" hidden></p>
+    <p id="error" class="error" hidden></p>
+    <p id="comparison" class="comparison" hidden></p>
+    <section id="empty" class="empty">
+      <h2 class="detail-only">在原网页开始截图</h2>
+      <p>先选择「浏览器侧栏」模式，再回到原网页按 <kbd>Ctrl+Shift+E</kbd> 截图。</p>
+      <p class="detail-only">侧栏需要手动打开；关闭后重新打开，可继续查看本次结果。</p>
+    </section>
+    <div id="results" class="results"></div>
+  </main>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

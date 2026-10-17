@@ -96,6 +96,13 @@ B. 上海
 
   <section>
     <h2>外观与历史</h2>
+    <label>截图结果显示位置
+      <select id="screenshotDisplay">
+        <option value="sidepanel">浏览器侧栏（默认，截取当前可见区域）</option>
+        <option value="bubble">网页气泡（可拖框裁剪）</option>
+      </select>
+    </label>
+    <p class="muted">侧栏模式通过快捷键后台截图，不自动打开窗口，也不添加网页选框或气泡。可从扩展弹窗手动打开“截图结果侧栏”。手动打开/点击侧栏仍可能造成焦点变化；此模式不保证平台无法检测。使用过网页气泡后请刷新网页，以移除已加载的页面控件。</p>
     <label>气泡透明度 <span id="opaV">0.95</span>
       <input id="bubbleOpacity" type="range" min="0.4" max="1" step="0.05" value="0.95" />
     </label>
@@ -145,7 +152,7 @@ B. 上海
         <tr>
           <td><kbd>Ctrl+Shift+E</kbd></td>
           <td><b>抓取可见区域</b>（截图）</td>
-          <td>按快捷键后直接拖框选区，页面保持原亮度，只显示淡边框；可在“外观与历史”调节透明度。松开发送，Esc 取消。截图自动排除扩展气泡和按钮。</td>
+          <td>默认后台截取当前可见区域，在浏览器侧栏显示结果；不自动打开侧栏。在“外观与历史”可改为网页框选模式，并调节选框透明度。</td>
         </tr>
         <tr>
           <td><kbd>Ctrl+Shift+P</kbd></td>

@@ -135,6 +135,7 @@ function createContentHarness({ deferAck = false, deferCapture = false, captureE
   let selection = '中国的首都是哪里？ A.北京 B.上海';
   const asks = [];
   const captures = [];
+  const sideCaptures = [];
   const frames = [];
   const windowEvents = new Element('window');
   const window = {
@@ -162,6 +163,11 @@ function createContentHarness({ deferAck = false, deferCapture = false, captureE
       openOptionsPage() {},
       sendMessage(message, callback) {
         if (message.type === 'aqh/get-config') { callback({ ok: true, cfg: { hasKey: false, providers: [], promptMode: 'reason', ...cfg } }); return; }
+        if (message.type === 'aqh/capture-sidepanel') {
+          sideCaptures.push(message);
+          callback({ ok: true });
+          return;
+        }
         if (message.type === 'aqh/capture-visible-tab') {
           captures.push({
             message, callback,
@@ -191,7 +197,7 @@ function createContentHarness({ deferAck = false, deferCapture = false, captureE
     return response;
   };
   return {
-    document, asks, captures, draws, canvases, send,
+    document, asks, captures, sideCaptures, draws, canvases, send,
     bubble: () => document.getElementById('aqh-bubble'),
     mask: () => document.getElementById('aqh-mask'),
     trigger: (kind) => send('aqh/capture', { kind }),
@@ -390,6 +396,49 @@ function assertCropRemoved(h, { pendingCapture = false } = {}) {
     assert.equal(h.listenerCount(type), 0, `${type} crop listener must be removed`);
   }
 }
+
+test('the floating-button screenshot forwards side-panel mode without creating crop UI or an answer bubble', async () => {
+  const h = createContentHarness({ cfg: { screenshotDisplay: 'sidepanel' } });
+  await flush();
+  h.send('aqh/show-fab');
+  const fab = h.document.getElementById('aqh-fab');
+  fab.emit('mouseenter');
+  fab.querySelector('[data-k="visible"]').emit('click');
+  await flush();
+  assert.equal(h.sideCaptures.length, 1);
+  assert.equal(h.sideCaptures[0].type, 'aqh/capture-sidepanel');
+  assert.equal(h.sideCaptures[0].payload, undefined);
+  assertCropRemoved(h);
+  assert.equal(h.document.getElementById('aqh-root'), null);
+  assert.equal(h.bubble(), null);
+  assert.equal(h.captures.length, 0, 'Side-panel mode must not call the page screenshot interface');
+  assert.equal(h.asks.length, 0, 'The background route owns the model request');
+  assert.equal(h.canvases.length, 0);
+});
+
+test('changing screenshot display in sync storage restores the page crop flow without refreshing', async () => {
+  const h = createContentHarness({ cfg: { screenshotDisplay: 'sidepanel' } });
+  await flush();
+  h.storageChanged({ screenshotDisplay: { oldValue: 'sidepanel', newValue: 'bubble' } }, 'local');
+  h.trigger('visible');
+  await flush();
+  assert.equal(h.sideCaptures.length, 1, 'Unrelated local storage must not change the screenshot route');
+  assertCropRemoved(h);
+  assert.equal(h.bubble(), null);
+
+  h.storageChanged({ screenshotDisplay: { oldValue: 'sidepanel', newValue: 'bubble' } });
+  h.trigger('visible');
+  assert.ok(h.mask(), 'Switching to page mode must restore crop selection');
+  assert.ok(h.document.getElementById('aqh-sel'));
+  assert.equal(h.sideCaptures.length, 1, 'Page mode must not forward another side-panel request');
+  dragCrop(h);
+  await paintCropRemoval(h);
+  assertCropRemoved(h);
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.asks.length, 1);
+  assert.equal(h.asks[0].message.payload.imageDataUrl, 'data:image/jpeg;base64,CROPPED');
+  assert.ok(h.bubble());
+});
 
 for (const cancel of ['Escape', 'small crop']) {
   test(`a screenshot cancelled by ${cancel} sends no screenshot or model request`, async () => {

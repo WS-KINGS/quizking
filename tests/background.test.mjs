@@ -26,15 +26,25 @@ const answerResponse = (answer = '模型答案') => JSON.stringify({ answer, rea
 function createHarness(options = {}) {
   const sync = { saveHistory: false, providers: [], ...options.config };
   const local = { history: [] };
+  const session = {};
+  const sessionWrites = [];
+  const sessionWaiters = new Set();
   const sent = [];
+  const captures = [];
+  const injections = [];
+  const focusChanges = [];
+  const queries = [];
   const requests = [];
   const searches = [];
   const timeline = [];
   const waiters = new Set();
   let listener;
+  let commandListener;
+  let contentReady = !options.noContentScript;
+  let windowReads = 0;
   let bankReads = 0;
   const event = () => ({ addListener() {} });
-  const storageArea = (values) => ({
+  const storageArea = (values, onWrite = () => {}) => ({
     get(keys, callback) {
       const result = {};
       if (Array.isArray(keys)) {
@@ -42,11 +52,14 @@ function createHarness(options = {}) {
       } else {
         Object.assign(result, clone(keys || {}), clone(values));
       }
-      queueMicrotask(() => callback(result));
+      if (callback) queueMicrotask(() => callback(result));
+      else return Promise.resolve(result);
     },
     set(patch, callback) {
       Object.assign(values, clone(patch));
+      onWrite(clone(patch));
       if (callback) queueMicrotask(callback);
+      else return Promise.resolve();
     },
   });
   const chrome = {
@@ -54,19 +67,61 @@ function createHarness(options = {}) {
       lastError: null, onInstalled: event(),
       onMessage: { addListener(fn) { listener = fn; } },
     },
-    storage: { sync: storageArea(sync), local: storageArea(local) },
+    storage: {
+      sync: storageArea(sync), local: storageArea(local),
+      session: storageArea(session, (patch) => {
+        sessionWrites.push(patch);
+        for (const waiter of sessionWaiters) waiter(clone(session));
+      }),
+    },
     tabs: {
-      query(_query, callback) { callback([{ id: 31, windowId: 9 }]); },
+      query(query, callback) {
+        queries.push(clone(query));
+        const tab = options.queryTab ? options.queryTab(query, queries.length - 1) : { id: 31, windowId: 9 };
+        const tabs = tab ? [clone(tab)] : [];
+        if (callback) callback(tabs);
+        else return Promise.resolve(tabs);
+      },
+      captureVisibleTab(windowId, settings, callback) {
+        captures.push(clone({ windowId, settings }));
+        Promise.resolve().then(() => options.capture ? options.capture() : 'data:image/png;base64,CAPTURED_IMAGE')
+          .then((image) => {
+            chrome.runtime.lastError = options.captureError ? { message: options.captureError } : null;
+            callback(image);
+            chrome.runtime.lastError = null;
+          });
+      },
       sendMessage(tabId, message, callback) {
         const record = clone({ tabId, ...message });
         sent.push(record);
         timeline.push(message.type);
         for (const waiter of waiters) waiter(record);
+        if (!contentReady) return Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'));
         callback?.();
+        return Promise.resolve();
       },
+      create(settings) { focusChanges.push({ kind: 'tabs.create', settings }); return Promise.resolve({}); },
+      update(...args) { focusChanges.push({ kind: 'tabs.update', args }); return Promise.resolve({}); },
+    },
+    scripting: {
+      async insertCSS(settings) { injections.push({ kind: 'css', ...clone(settings) }); },
+      async executeScript(settings) { injections.push({ kind: 'script', ...clone(settings) }); contentReady = true; },
+    },
+    windows: {
+      async get(id) {
+        const focused = options.windowFocused ? options.windowFocused(windowReads++) : true;
+        return { id, focused };
+      },
+      create(settings) { focusChanges.push({ kind: 'windows.create', settings }); return Promise.resolve({}); },
+      update(...args) { focusChanges.push({ kind: 'windows.update', args }); return Promise.resolve({}); },
+    },
+    sidePanel: {
+      open(settings) { focusChanges.push({ kind: 'sidePanel.open', settings }); return Promise.resolve(); },
+      setOptions() { return Promise.resolve(); },
+      setPanelBehavior() { return Promise.resolve(); },
     },
     contextMenus: { onClicked: event(), removeAll(callback) { callback(); }, create() {} },
-    commands: { onCommand: event() },
+    commands: { onCommand: { addListener(fn) { commandListener = fn; } } },
   };
   const context = vm.createContext({
     chrome, self: {}, console: { log() {}, warn() {} },
@@ -116,13 +171,33 @@ function createHarness(options = {}) {
       resolve(clone(response));
     }), true, 'The listener must retain its asynchronous response channel');
   });
+  const waitForSession = (predicate) => {
+    if (predicate(session)) return Promise.resolve(clone(session));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        sessionWaiters.delete(onWrite);
+        reject(new Error('Expected side panel state did not arrive'));
+      }, 2000);
+      function onWrite(state) {
+        if (!predicate(state)) return;
+        clearTimeout(timer);
+        sessionWaiters.delete(onWrite);
+        resolve(state);
+      }
+      sessionWaiters.add(onWrite);
+    });
+  };
   const ask = async (payload = {}) => {
     const response = await dispatch({ type: 'aqh/ask', payload: { reqId: 'client-request-1', mode: 'text', text: question, ...payload } });
     assert.equal(response.ok, true);
     const finish = await waitFor((m) => m.type === 'aqh/ask-finish' && m.payload.reqId === response.result.reqId);
     return { response, finish: finish.payload };
   };
-  return { ask, dispatch, waitFor, sent, requests, searches, timeline, sync, local, get bankReads() { return bankReads; } };
+  return {
+    ask, dispatch, waitFor, waitForSession, command: (name) => commandListener(name),
+    sent, captures, injections, focusChanges, queries, requests, searches, timeline,
+    sync, local, session, sessionWrites, get bankReads() { return bankReads; },
+  };
 }
 
 test('an exact text match works without an API key and reports its file source', async () => {
@@ -380,4 +455,205 @@ test('invalid client request ids are replaced consistently on every stream messa
   assert.notEqual(response.result.reqId, '<invalid id>');
   assert.equal(finish.reqId, response.result.reqId);
   assert.ok(h.sent.every((m) => m.payload.reqId === response.result.reqId));
+});
+
+function assertNoPageSideEffects(h) {
+  assert.deepEqual(h.sent, [], 'Background screenshots must not communicate with the web page');
+  assert.deepEqual(h.injections, [], 'Background screenshots must not inject scripts or styles');
+  assert.deepEqual(h.focusChanges, [], 'Capturing must not open or focus any UI');
+}
+
+test('the default screenshot command stores its result outside the page and never opens UI', async () => {
+  const h = createHarness({ config: { providers: [provider()] }, noContentScript: true });
+  await h.command('capture-visible');
+  const result = h.session.sidepanelResult;
+  assert.equal(h.sync.screenshotDisplay, 'sidepanel');
+  assert.equal(result.state, 'finished');
+  assert.equal(result.tabId, 31);
+  assert.equal(result.items[0].answer, '模型答案');
+  assert.deepEqual(h.captures, [{ windowId: 9, settings: { format: 'png' } }]);
+  assert.equal(h.requests.length, 1);
+  assert.ok(h.requests[0].body.messages[1].content.some((part) => part.image_url?.url === 'data:image/png;base64,CAPTURED_IMAGE'));
+  assertNoPageSideEffects(h);
+});
+
+test('side-panel screenshots still OCR the image, search the bank, and send references to all providers', async () => {
+  const h = createHarness({
+    config: { providers: [provider(), provider('p2')], saveHistory: true }, entries: [entry()], noContentScript: true,
+    respond(_request, index) { return index === 0 ? JSON.stringify({ question }) : answerResponse(); },
+  });
+  await h.command('capture-visible');
+  const result = h.session.sidepanelResult;
+  assert.equal(result.state, 'finished');
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.searches[0].query, question);
+  assert.deepEqual(result.items.map((item) => item.id), ['p1', 'p2']);
+  assert.match(result.bankNotice, /已识别截图文字并检索题库/);
+  assert.ok(h.requests.slice(1).every((request) => request.body.messages[1].content.some((part) => part.text?.includes('地理题库.txt'))));
+  assert.equal(h.local.history.length, 2);
+  const storedResults = JSON.stringify([h.sessionWrites, h.local]);
+  assert.doesNotMatch(storedResults, /data:image\/|CAPTURED_IMAGE|secret-key|apiKey/);
+  assert.ok(h.sessionWrites.some((patch) => patch.sidepanelResult.state === 'working'));
+  assertNoPageSideEffects(h);
+});
+
+test('side-panel progress preserves successful results when another provider fails', async () => {
+  const h = createHarness({
+    config: { providers: [provider(), provider('p2')], questionBankEnabled: false },
+    respond(request) { return request.body.model === 'p2-model' ? new Error('Endpoint unavailable') : answerResponse('成功答案'); },
+  });
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'finished');
+  assert.deepEqual(h.session.sidepanelResult.items.map((item) => item.ok), [true, false]);
+  assert.equal(h.session.sidepanelResult.items[0].answer, '成功答案');
+  assert.match(h.session.sidepanelResult.items[1].error, /Endpoint unavailable/);
+  assertNoPageSideEffects(h);
+});
+
+test('a failed browser screenshot is reported without sending any model request', async () => {
+  const h = createHarness({ config: { providers: [provider()] }, captureError: 'Screenshot permission denied' });
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  assert.match(h.session.sidepanelResult.error, /permission denied/);
+  assertNoPageSideEffects(h);
+});
+
+test('missing or invalid screenshot data is rejected before calling a model', async () => {
+  for (const image of [undefined, '', 'data:image/jpeg;base64,WRONG_FORMAT', 'not an image']) {
+    const h = createHarness({ config: { providers: [provider()] }, capture: () => image });
+    await h.command('capture-visible');
+    assert.equal(h.captures.length, 1);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.session.sidepanelResult.state, 'error');
+    assert.match(h.session.sidepanelResult.error, /未取得有效截图/);
+    assertNoPageSideEffects(h);
+  }
+});
+
+for (const changedAt of ['before', 'after']) {
+  test(`a tab change ${changedAt} screenshot cancels before any image reaches a model`, async () => {
+    const h = createHarness({
+      config: { providers: [provider()] },
+      queryTab(_query, index) {
+        return { id: index >= (changedAt === 'before' ? 1 : 2) ? 32 : 31, windowId: 9 };
+      },
+    });
+    await h.command('capture-visible');
+    assert.equal(h.captures.length, changedAt === 'before' ? 0 : 1);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.bankReads, 0);
+    assert.equal(h.session.sidepanelResult.state, 'error');
+    assert.match(h.session.sidepanelResult.error, /标签页已改变/);
+    assertNoPageSideEffects(h);
+  });
+
+  test(`window focus loss ${changedAt} screenshot cancels without trying to refocus it`, async () => {
+    const h = createHarness({
+      config: { providers: [provider()] },
+      windowFocused(index) { return changedAt === 'after' && index === 0; },
+    });
+    await h.command('capture-visible');
+    assert.equal(h.captures.length, changedAt === 'before' ? 0 : 1);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.session.sidepanelResult.state, 'error');
+    assert.match(h.session.sidepanelResult.error, /失去焦点/);
+    assertNoPageSideEffects(h);
+  });
+}
+
+test('overlapping screenshot commands run only once and release the lock after completion', async () => {
+  let releaseCapture;
+  let signalCapture;
+  const captured = new Promise((resolve) => { signalCapture = resolve; });
+  const image = new Promise((resolve) => { releaseCapture = resolve; });
+  const h = createHarness({
+    config: { providers: [provider()] },
+    capture() { signalCapture(); return image; },
+  });
+  const first = h.command('capture-visible');
+  await captured;
+  const firstReqId = h.session.sidepanelResult.reqId;
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.session.sidepanelResult.reqId, firstReqId);
+  assert.equal(h.requests.length, 0);
+  releaseCapture('data:image/png;base64,ONE_IMAGE');
+  await first;
+  assert.equal(h.requests.length, 1);
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 2);
+  assert.equal(h.requests.length, 2);
+  assert.notEqual(h.session.sidepanelResult.reqId, firstReqId);
+  assertNoPageSideEffects(h);
+});
+
+test('a canceled screenshot releases the lock for a later deliberate retry', async () => {
+  let focused = false;
+  const h = createHarness({ config: { providers: [provider()] }, windowFocused: () => focused });
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'error');
+  focused = true;
+  await h.command('capture-visible');
+  assert.equal(h.session.sidepanelResult.state, 'finished');
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.captures.length, 1);
+  assertNoPageSideEffects(h);
+});
+
+test('extension-page screenshot messages use the background route and reject page-origin triggers', async () => {
+  const h = createHarness({ config: { providers: [provider()] }, noContentScript: true });
+  const denied = await h.dispatch({ type: 'aqh/trigger', payload: { kind: 'visible' } });
+  assert.equal(denied.ok, false);
+  assert.equal(h.captures.length, 0);
+  const unknown = await h.dispatch({ type: 'aqh/trigger', payload: { kind: 'unrecognized' } }, {});
+  assert.equal(unknown.ok, false);
+  const response = await h.dispatch({ type: 'aqh/trigger', payload: { kind: 'visible' } }, {});
+  assert.equal(response.ok, true);
+  await h.waitForSession((state) => state.sidepanelResult?.state === 'finished');
+  assert.equal(h.requests.length, 1);
+  assertNoPageSideEffects(h);
+});
+
+test('the floating-button side-panel route requires a source tab and leaves that page untouched', async () => {
+  const h = createHarness({ config: { providers: [provider()] } });
+  const denied = await h.dispatch({ type: 'aqh/capture-sidepanel' }, {});
+  assert.equal(denied.ok, false);
+  assert.equal(h.captures.length, 0);
+  const response = await h.dispatch({ type: 'aqh/capture-sidepanel' });
+  assert.equal(response.ok, true);
+  await h.waitForSession((state) => state.sidepanelResult?.state === 'finished');
+  assert.equal(h.session.sidepanelResult.tabId, 31);
+  assert.equal(h.captures.length, 1);
+  assert.equal(h.requests.length, 1);
+  assertNoPageSideEffects(h);
+});
+
+test('the explicit bubble mode lazily loads page scripts once and preserves the crop route', async () => {
+  const h = createHarness({ config: { screenshotDisplay: 'bubble' }, noContentScript: true });
+  await h.command('capture-visible');
+  assert.equal(h.captures.length, 0, 'The bubble script retains responsibility for cropping');
+  assert.equal(h.requests.length, 0);
+  assert.deepEqual(h.sessionWrites, []);
+  assert.deepEqual(h.sent.map((message) => message.type), ['aqh/capture', 'aqh/ping', 'aqh/capture'],
+    'Wait for the newly loaded page script to finish configuration before retrying capture');
+  assert.ok(h.sent.filter((message) => message.type === 'aqh/capture').every((message) => message.payload.kind === 'visible'));
+  assert.deepEqual(h.injections, [
+    { kind: 'css', target: { tabId: 31 }, files: ['bubble.css'] },
+    { kind: 'script', target: { tabId: 31 }, files: ['content.js'] },
+  ]);
+  await h.command('capture-visible');
+  assert.equal(h.injections.length, 2, 'Reuse the loaded script on later actions');
+  assert.equal(h.sent.length, 4);
+  assert.deepEqual(h.focusChanges, []);
+});
+
+test('selection capture keeps the existing message route when its page script is already present', async () => {
+  const h = createHarness();
+  await h.command('capture-selection');
+  assert.deepEqual(h.sent, [{ tabId: 31, type: 'aqh/capture', payload: { kind: 'selection' } }]);
+  assert.deepEqual(h.injections, []);
+  assert.deepEqual(h.sessionWrites, []);
+  assert.equal(h.captures.length, 0);
 });

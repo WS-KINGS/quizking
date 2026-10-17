@@ -2,12 +2,12 @@
 
 # QuizKing · 答题王
 
-> 把网页上看到的题目（截图 / 划词 / DOM）丢给 OpenAI 兼容 LLM，把答案 / 解析吐回悬浮气泡。
+> 把网页上的题目（截图 / 划词 / DOM）交给 OpenAI 兼容 LLM，结果显示在浏览器侧栏或网页气泡。
 
-[![Release](https://img.shields.io/badge/release-v0.4.2-3563ff)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.5.0-3563ff)](../../releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/manifest-V3-3563ff)](#技术栈)
-[![Chrome 114+](https://img.shields.io/badge/chrome-114%2B-4285f4)](#安装)
+[![Chrome 116+](https://img.shields.io/badge/chrome-116%2B-4285f4)](#安装)
 [![No telemetry](https://img.shields.io/badge/telemetry-none-2ea44f)](#隐私与安全)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](../../pulls)
 [![Bilibili](https://img.shields.io/badge/B站-97727630-00aeec?logo=bilibili&logoColor=white)](https://space.bilibili.com/97727630)
@@ -35,6 +35,7 @@
 
 - **上传本地题库** — 工具栏弹窗直接上传 Word（`.docx`）/ TXT；先搜索题库，完整精确匹配可直接引用答案，相似题仅供模型核对。
 - **三通道采集** — 划词文本 / 整页 DOM 文本 / 可见区域截图 + 框选裁剪
+- **侧栏截图（默认）** — 快捷键后台截取当前可见区域，结果留在扩展侧栏；不自动打开侧栏，不添加网页选框或气泡。侧栏默认精简显示，可切换详细解析。
 - **多 API 并行对比** — 可配置多个服务商（各自 Endpoint / Key / Model），抓题时同时调用，**谁先返回谁先显示**，答案并列展示并标记是否一致
 - **OpenAI 兼容 endpoint** — OpenAI / DeepSeek / 火山方舟 / Ollama 全部可接
 - **两种 Prompt 模式** — 答案 + 解析（默认）/ 自定义
@@ -169,7 +170,7 @@ D. 金星
 | 快捷键 | 作用 | 何时用 |
 | --- | --- | --- |
 | `Ctrl+Shift+Q`（macOS `⌘⇧Q`） | **抓取选区** | 先在页面选中一段文字，按后把选中文本发给 LLM。适合：网页上能直接选中的题目。 |
-| `Ctrl+Shift+E` | **抓取可见区域**（截图） | 直接拖框裁剪，页面保持原亮度；只在拖动时显示淡边框，默认透明度 92%，可在设置的“外观与历史”中调节。松开发送，Esc 取消。截图自动排除扩展气泡和按钮。 |
+| `Ctrl+Shift+E` | **抓取可见区域**（截图） | 默认后台截图，在侧栏保存结果；不自动打开侧栏，不显示网页选框。设置 → 外观与历史可改为网页气泡模式：拖动框选、松开发送、Esc 取消，选框默认透明度 92%。 |
 | `Ctrl+Shift+P` | **抓取整页 DOM 文本** <sub>⚠ 实验</sub> | 把整页 `innerText` 前 6000 字符发给 LLM。适合：长文章、整段题文、多选合集。⚠ **实验性**：长文本会显著增加 token 消耗与延迟；多数场景用「划词」更准。 |
 | `Ctrl+Shift+H` | **显示 / 隐藏气泡** | 答题完成后想收起气泡（不丢内容），再按一次又出现。 |
 
@@ -188,6 +189,14 @@ D. 金星
 **其他触发方式**
 
 - 页面右下角悬浮「王」字按钮 → 鼠标悬停展开「选区 / 截图 / 整页 / 气泡」
+
+### 侧栏截图模式
+
+在扩展弹窗中点击“打开截图结果侧栏”，随后回到原网页使用截图快捷键。也可以保持侧栏关闭，稍后手动打开查看最近一次结果。侧栏默认仅显示答案，点击“详细”查看来源、解析及状态。一次处理尚未结束时重复按截图快捷键不会重复提交。
+
+此模式截取整个当前可见区域，不提供网页拖框；图片会发送给你配置的模型，截图本身不写入结果存储。结果暂存于浏览器会话，浏览器重启或扩展重载后清除；历史是否保留由“保存历史记录”控制。
+
+扩展不再在打开网页时自动注入脚本和样式。划词、整页、网页气泡及王字按钮等页面功能按需加载；使用过这些功能后，刷新网页可移除已加载的页面界面。手动打开/点击扩展弹窗或侧栏仍可能产生失焦或窗口尺寸变化；此模式不承诺避开平台检测，也不修改网站的焦点和可见性事件。
 - 选中文字 → 右键 → 「抓取选区并问 AI」 / 「抓取可见区域并问 AI」 / 「抓取整页 DOM 文本并问 AI」 / 「关闭当前 AI 气泡」
 - 工具栏图标 → 弹 popup → 四个按钮（含详细快捷键说明）
 
@@ -230,6 +239,7 @@ QuizKing/
 │  ├─ content.js                  # 内容脚本：捕获通道 / 气泡 / FAB
 │  ├─ bubble.css                  # 气泡样式
 │  ├─ popup.html / popup.js
+│  ├─ sidepanel.html / sidepanel.js / sidepanel.css
 │  ├─ options.html / options.css / options.js
 │  ├─ _locales/zh_CN/messages.json
 │  └─ icons/                      # 16 / 48 / 128 王字 PNG
@@ -353,6 +363,7 @@ const svg = fs.readFileSync('src/icons/icon.svg');
 | `activeTab` | popup 获取当前 tab id |
 | `contextMenus` | 注册右键菜单 |
 | `scripting` | 截图 / 注入 |
+| `sidePanel` | 在浏览器自身侧栏显示截图结果 |
 | `notifications` | （预留）错误提示 |
 | `host_permissions: <all_urls>` | content 脚本可注入任意页以捕获内容 |
 
@@ -373,7 +384,7 @@ const svg = fs.readFileSync('src/icons/icon.svg');
 
 1. Fork & 创建分支
 2. `node --check src/*.js` 通过
-3. 自测：在 `chrome://extensions` 重载扩展后，用「划词 / 截图 / 整页」三条通道各抓一题，确认气泡出答案
+3. 自测：在 `chrome://extensions` 重载扩展并刷新网页，用「划词 / 截图 / 整页」三条通道各抓一题，确认截图结果进入侧栏，其余页面功能显示气泡；再在设置切换网页截图模式验证框选
 4. 提 PR，附带：改了什么 / 为什么 / 怎么验证 / 风险点
 5. 维护者审 → 合入
 

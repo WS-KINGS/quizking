@@ -722,6 +722,10 @@
         }
         await askAndShow({ mode: "text", captureKind: "selection", text }, "[selection]\n" + text);
       } else if (kind === "visible") {
+        if (cfg?.screenshotDisplay === "sidepanel") {
+          await callBg("aqh/capture-sidepanel");
+          return;
+        }
         const dataUrl = await chooseCropAndCapture();
         if (!dataUrl) return;
         await askAndShow(
@@ -773,7 +777,8 @@
       return sendResponse({ ok: true, shown });
     }
     if (msg.type === "aqh/ping") {
-      sendResponse({ ok: true });
+      configReady.then(() => sendResponse({ ok: true }));
+      return true;
     }
     // Incremental results: each provider lands on its own, then a final settle.
     if (["aqh/ask-item", "aqh/ask-finish", "aqh/ask-status"].includes(msg.type)) {
@@ -786,6 +791,7 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     if (!cfg) cfg = {};
+    if (changes.screenshotDisplay) cfg.screenshotDisplay = changes.screenshotDisplay.newValue;
     if (changes.bubbleOpacity) {
       cfg.bubbleOpacity = changes.bubbleOpacity.newValue;
       const bubble = document.getElementById("aqh-bubble");
@@ -798,7 +804,7 @@
     }
   });
 
-  (async () => {
+  const configReady = (async () => {
     cfg = ((await callBg("aqh/get-config")) || {}).cfg || null;
     if (cfg && cfg.promptMode) promptMode = cfg.promptMode;
     log("boot promptMode=", promptMode);

@@ -3,22 +3,30 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-k]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const k = btn.getAttribute("data-k");
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) return;
-      // show-fab is a direct message (no capture payload), the rest go through aqh/capture.
-      const msg = (k === "show-fab")
-        ? { type: "aqh/show-fab" }
-        : { type: "aqh/capture", payload: { kind: k } };
-      chrome.tabs.sendMessage(tab.id, msg, (res) => {
-        if (chrome.runtime.lastError) { $("status").textContent = "当前页面不可用"; return; }
+      chrome.runtime.sendMessage({ type: "aqh/trigger", payload: { kind: k } }, (res) => {
+        if (chrome.runtime.lastError || !res?.ok) {
+          $("status").textContent = res?.error || "当前页面不可用";
+          return;
+        }
         if (k === "show-fab" && res && typeof res.shown === "boolean") {
           $("status").textContent = res.shown ? "已召唤 王字气泡" : "已收起 王字气泡";
-        }
+        } else $("status").textContent = k === "visible" ? "已发送。侧栏模式请在截图结果侧栏查看；网页模式请回到网页框选。" : "已发送：" + k;
       });
-      if (k !== "show-fab") $("status").textContent = "已发送：" + k;
     });
   });
   $("opts").addEventListener("click", () => chrome.runtime.openOptionsPage());
+  // Prepare the window id before the click, retaining its user-gesture context.
+  let panelWindowId;
+  chrome.windows.getCurrent().then((win) => { panelWindowId = win.id; }).catch(() => {});
+  $("openSidepanel").addEventListener("click", () => {
+    if (panelWindowId === undefined || !chrome.sidePanel?.open) {
+      $("status").textContent = "暂时无法打开侧栏，请使用支持侧栏的 Chrome/Edge 116 或更新版本。";
+      return;
+    }
+    chrome.sidePanel.open({ windowId: panelWindowId })
+      .then(() => window.close())
+      .catch((error) => { $("status").textContent = "打开侧栏失败：" + error.message; });
+  });
 
   chrome.runtime.sendMessage({ type: "aqh/test" }, (res) => {
     if (!res || !res.ok) {

@@ -31,6 +31,7 @@ const DEFAULTS = {
   temperature: 0.2,
   bubbleOpacity: 0.95,
   captureBorderOpacity: 0.08,
+  screenshotDisplay: "sidepanel",
   systemPrompt:
     "你是一位严谨的解题助手。用户会给你网页上截取的一道题目（可能附文本和图片）。请仔细阅读，输出严格的 JSON：{\"answer\":\"...\", \"reasoning\":\"...\"}，不要任何额外文字、不要 markdown 代码块。answer 用最简洁的方式给出最终答案；reasoning 解释关键步骤（中文）。",
   promptMode: "reason",
@@ -109,17 +110,93 @@ function getActiveTab() {
 async function sendToContent(tab, type, payload) {
   if (!tab || !tab.id) return;
   try {
-    await chrome.tabs.sendMessage(tab.id, { type, payload });
+    return await chrome.tabs.sendMessage(tab.id, { type, payload });
   } catch (e) {
-    // ignore if no content script (e.g. chrome:// pages)
-    console.warn("sendToContent failed", type, e && e.message);
+    if (type === "aqh/close") return;
+    // Page UI is loaded only when explicitly using a page-based feature.
+    await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["bubble.css"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    await chrome.tabs.sendMessage(tab.id, { type: "aqh/ping" });
+    return chrome.tabs.sendMessage(tab.id, { type, payload });
   }
 }
 
 async function triggerCapture(kind) {
   const tab = await getActiveTab();
-  if (!tab) return;
-  await sendToContent(tab, "aqh/capture", { kind });
+  if (!tab) throw new Error("没有可用的网页。");
+  if (kind === "visible") {
+    const cfg = await ensureDefaults();
+    if (cfg.screenshotDisplay !== "bubble") return captureToSidepanel(tab, cfg);
+  }
+  return sendToContent(tab, kind === "show-fab" ? "aqh/show-fab" : "aqh/capture", { kind });
+}
+
+let sideCaptureBusy = false;
+
+async function assertCaptureTab(tab) {
+  const tabs = await new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, windowId: tab.windowId }, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
+  if (tabs?.[0]?.id !== tab.id) throw new Error("当前标签页已改变，本次截图已取消。");
+  const window = await chrome.windows.get(tab.windowId);
+  if (!window.focused) throw new Error("浏览器窗口已失去焦点，本次截图已取消。");
+}
+
+async function captureToSidepanel(tab, cfg) {
+  if (sideCaptureBusy) return { busy: true };
+  sideCaptureBusy = true;
+  const reqId = newReqId();
+  const active = activeProviders(cfg);
+  const snapshot = {
+    reqId, tabId: tab.id, state: "working", status: "正在截取当前可见区域…",
+    pending: active.map(({ id, label, model }) => ({ id, label, model })),
+    items: [], bankNotice: "", updatedAt: Date.now(),
+  };
+  let writes = Promise.resolve();
+  const publish = () => {
+    const value = { ...snapshot, items: [...snapshot.items], updatedAt: Date.now() };
+    // Keep progress writes ordered; never store the screenshot or API credentials.
+    writes = writes.then(() => chrome.storage.session.set({ sidepanelResult: value }));
+    return writes;
+  };
+  const emit = (type, value) => {
+    if (type === "aqh/ask-status") snapshot.status = value.text || "正在分析…";
+    if (type === "aqh/ask-item") {
+      snapshot.items = [...snapshot.items.filter((item) => item.id !== value.item.id), value.item];
+    }
+    if (type === "aqh/ask-finish") {
+      snapshot.items = value.items;
+      snapshot.bankNotice = value.bankNotice;
+      snapshot.state = "finished";
+      snapshot.status = "处理完成";
+    }
+    publish().catch(() => {});
+  };
+  try {
+    await publish();
+    await assertCaptureTab(tab);
+    const imageDataUrl = await captureVisibleToBase64(tab);
+    await assertCaptureTab(tab);
+    await runAsk({
+      reqId, tabId: tab.id, cfg, active, promptMode: cfg.promptMode || "reason", emit,
+      payload: { mode: "image", imageDataUrl, text: "请分析截图中题目并回答。" },
+    });
+    await writes;
+    return { reqId };
+  } catch (error) {
+    snapshot.state = "error";
+    snapshot.error = error?.message || String(error);
+    snapshot.status = "截图未完成";
+    // A previous storage error must not prevent a best-effort error update.
+    writes = writes.catch(() => {});
+    await publish();
+    return { reqId, error: snapshot.error };
+  } finally {
+    sideCaptureBusy = false;
+  }
 }
 
 async function captureVisibleToBase64(tab) {
@@ -129,6 +206,10 @@ async function captureVisibleToBase64(tab) {
       chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) {
+          reject(new Error("未取得有效截图，请重试。"));
           return;
         }
         resolve(dataUrl);
@@ -331,21 +412,21 @@ async function prepareQuestionBank(payload, cfg, active, onStatus) {
   };
 }
 
-async function runAsk({ reqId, tabId, payload, cfg, active, promptMode }) {
+async function runAsk({ reqId, tabId, payload, cfg, active, promptMode, emit = (type, value) => pushToTab(tabId, type, value) }) {
   let items;
   let bankNotice = "";
   try {
     const prepared = await prepareQuestionBank(payload, cfg, active, (text) => {
-      pushToTab(tabId, "aqh/ask-status", { reqId, text });
+      emit("aqh/ask-status", { reqId, text });
     });
     bankNotice = prepared.notice;
     if (prepared.local) {
       items = [prepared.local];
     } else {
-      pushToTab(tabId, "aqh/ask-status", { reqId, text: bankNotice });
+      emit("aqh/ask-status", { reqId, text: bankNotice });
       const settled = await askAll(prepared.payload, (item) => {
         item.bankNotice = bankNotice;
-        pushToTab(tabId, "aqh/ask-item", { reqId, item });
+        emit("aqh/ask-item", { reqId, item });
       }, cfg, active);
       items = settled.items;
     }
@@ -354,7 +435,7 @@ async function runAsk({ reqId, tabId, payload, cfg, active, promptMode }) {
     const roster = active.length ? active : [{ id: "question-bank", label: "本地题库", model: "" }];
     items = roster.map((p) => ({ id: p.id, label: p.label, model: p.model, ok: false, error: msg, bankNotice, ms: null }));
   }
-  pushToTab(tabId, "aqh/ask-finish", { reqId, items, promptMode, bankNotice });
+  emit("aqh/ask-finish", { reqId, items, promptMode, bankNotice });
   await saveHistoryMany(
     items.filter((it) => it.ok).map((it) => ({
       ts: Date.now(),
@@ -420,10 +501,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.commands.onCommand.addListener(async (cmd) => {
-  if (cmd === "capture-selection") return triggerCapture("selection");
-  if (cmd === "capture-visible") return triggerCapture("visible");
-  if (cmd === "capture-page") return triggerCapture("page");
-  if (cmd === "toggle-bubble") return triggerCapture("toggle");
+  try {
+    if (cmd === "capture-selection") return await triggerCapture("selection");
+    if (cmd === "capture-visible") return await triggerCapture("visible");
+    if (cmd === "capture-page") return await triggerCapture("page");
+    if (cmd === "toggle-bubble") return await triggerCapture("toggle");
+  } catch (error) { console.warn("[aqh] 当前页面无法执行此操作", error?.message); }
 });
 
 // 来自 content 的消息
@@ -431,6 +514,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (!msg || !msg.type) return sendResponse({ ok: false, error: "empty" });
+      if (msg.type === "aqh/capture-sidepanel" && sender.tab) {
+        const cfg = await ensureDefaults();
+        sendResponse({ ok: true });
+        captureToSidepanel(sender.tab, cfg).catch((error) => console.warn("[aqh] 截图失败", error?.message));
+        return;
+      }
+      if (msg.type === "aqh/trigger") {
+        // Only extension pages can use this router; page features retain aqh/ask.
+        if (sender.tab) return sendResponse({ ok: false, error: "此操作需从扩展界面发起。" });
+        const kind = msg.payload?.kind;
+        if (!["selection", "visible", "page", "toggle", "show-fab"].includes(kind)) {
+          return sendResponse({ ok: false, error: "未知操作。" });
+        }
+        if (kind !== "visible") {
+          const result = await triggerCapture(kind);
+          return sendResponse({ ...result, ok: true });
+        }
+        // Acknowledge immediately; side-panel progress lives in session storage.
+        const work = triggerCapture(kind);
+        sendResponse({ ok: true });
+        work.catch((error) => console.warn("[aqh] 操作失败", error?.message));
+        return;
+      }
       if (msg.type === "aqh/get-config") {
         const cfg = await ensureDefaults();
         return sendResponse({ ok: true, cfg: sanitizeCfg(cfg) });

@@ -7,6 +7,7 @@ const FIELDS = [
   "reasoningPrompt",
   "bubbleOpacity",
   "captureBorderOpacity",
+  "screenshotDisplay",
   "saveHistory",
 ];
 
@@ -151,6 +152,7 @@ function load() {
     const borderOpacity = Number(cfg.captureBorderOpacity ?? 0.08);
     $("captureBorderTransparency").value = Math.round(100 * (1 - (Number.isFinite(borderOpacity) ? Math.min(1, Math.max(0.02, borderOpacity)) : 0.08)));
     updateCapturePreview();
+    $("screenshotDisplay").value = cfg.screenshotDisplay === "bubble" ? "bubble" : "sidepanel";
     $("saveHistory").checked = (cfg.saveHistory === undefined ? true : !!cfg.saveHistory);
     // Migrate any pre-existing 'answer' mode users to 'reason' so the answer-only path is gone.
     const mode = (cfg.promptMode === "answer" || !cfg.promptMode) ? "reason" : cfg.promptMode;
@@ -190,6 +192,7 @@ function save() {
     reasoningPrompt: $("reasoningPrompt").value,
     bubbleOpacity: Number($("bubbleOpacity").value),
     captureBorderOpacity: (100 - Number($("captureBorderTransparency").value)) / 100,
+    screenshotDisplay: $("screenshotDisplay").value,
     saveHistory: $("saveHistory").checked,
   };
   chrome.storage.sync.set(next, () => {
@@ -372,6 +375,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCapturePreview();
     markDirty();
   });
+  $("screenshotDisplay").addEventListener("change", markDirty);
   // Warn the user if they try to leave the page with unsaved changes.
   window.addEventListener("beforeunload", (e) => {
     if (dirty) { e.preventDefault(); e.returnValue = ""; }
